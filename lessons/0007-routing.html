@@ -85,7 +85,7 @@ https://dev.example.com/.well-known/oauth-protected-resource/mcp</pre>
 <h2>What's still between us and prod</h2>
 <ol>
   <li><b>Template bump</b>: bump prod to deployment template 4.0.8+ so the already-merged Exact rules take effect.</li>
-  <li><b>Release port</b>: all the MRs (engine-service, Management Console consent page, infrastructure, compose) go into the next release.</li>
+  <li><b>Release port</b>: all the changes (engine-service, Management Console consent page, infrastructure, compose) go into the next release.</li>
   <li><b><dfn data-t="issuer-flag">MCP_OAUTH_ISSUER</dfn></b> set on prod to <code>https://console.amfg.ai</code>. Until then the feature is fully off (lesson 0003), so shipping the code early is safe.</li>
   <li><b>Directory listing</b>: the business checklist for listing the connector in Claude's directory.</li>
 </ol>

@@ -75,16 +75,53 @@ window.TERMS = [
   {id: 'deployment-template', group: 'AMFG infrastructure', term: 'deployment-template', plain: "AMFG's npm package that generates every environment's Kubernetes manifests from one config file.", amfg: 'extraIngressRules first appears in 4.0.8; older versions silently ignore the key. Dev runs 4.0.9; prod pins ^3.0.1.', src: ["Kubernetes: Ingress path types", "https://kubernetes.io/docs/concepts/services-networking/ingress/#path-types"]}
 ];
 
+// Abbreviations get a hover tip wherever they appear in lesson prose (not in code, pre or diagrams).
+window.ABBRS = [
+  {abbr: 'MCP', full: 'Model Context Protocol', plain: 'The standard way AI apps like Claude call outside tools and read data.', t: 'mcp'},
+  {abbr: 'PKCE', full: 'Proof Key for Code Exchange (say "pixy")', plain: 'The app proves it is the same one that started the sign-in, so a stolen authorization code is useless on its own.', t: 'pkce'},
+  {abbr: 'S256', full: 'SHA-256 method', plain: "PKCE's way of turning the secret verifier into the public challenge: hash it with SHA-256, then base64url-encode it.", t: 's256'},
+  {abbr: 'CIMD', full: 'Client ID Metadata Document', plain: "The app's client id is a URL. Fetching it returns a small JSON file that says who the app is and where it may redirect. No registration step needed.", t: 'cimd'},
+  {abbr: 'DCR', full: 'Dynamic Client Registration', plain: 'The app registers itself on the fly and gets a fresh client id. The older approach that MCP now discourages in favour of CIMD.', t: 'dcr'},
+  {abbr: 'PRM', full: 'Protected Resource Metadata', plain: "A JSON document the API publishes that says which authorization server issues its tokens.", t: 'prm'},
+  {abbr: 'SSRF', full: 'Server-Side Request Forgery', plain: 'Tricking a server into fetching a URL the attacker picks, for example an internal address it should never reach.', t: 'ssrf'},
+  {abbr: 'JWT', full: 'JSON Web Token (say "jot")', plain: 'A signed token that carries its own data. A server can check it without a database lookup, but it is hard to cancel before it expires.'},
+  {abbr: 'RFC', full: 'Request for Comments', plain: 'A numbered internet standard published by the IETF. "RFC 7636" is the PKCE standard, for example.'},
+  {abbr: 'IETF', full: 'Internet Engineering Task Force', plain: 'The body that writes internet standards, including OAuth.'},
+  {abbr: 'API', full: 'Application Programming Interface', plain: 'A way for one program to talk to another, for example over HTTP.'},
+  {abbr: 'REST', full: 'Representational State Transfer', plain: 'The common style of web API: URLs name things, HTTP methods (GET, POST…) say what to do with them.'},
+  {abbr: 'URL', full: 'Uniform Resource Locator', plain: 'A web address, like https://example.com/mcp.'},
+  {abbr: 'URI', full: 'Uniform Resource Identifier', plain: 'The general name for an identifier; every URL is a URI. OAuth says "redirect URI" for the address the user is sent back to.', t: 'redirect-uri'},
+  {abbr: 'HTTPS', full: 'HTTP Secure', plain: 'HTTP over an encrypted connection (TLS), so nobody in between can read or change the traffic.'},
+  {abbr: 'HTTP', full: 'HyperText Transfer Protocol', plain: 'The request/response protocol of the web.'},
+  {abbr: 'TLS', full: 'Transport Layer Security', plain: 'The encryption behind HTTPS.'},
+  {abbr: 'SHA-256', full: 'Secure Hash Algorithm, 256-bit', plain: 'A one-way fingerprint: the same input always gives the same 64-character result, but you cannot get the input back from it.', t: 'hash'},
+  {abbr: 'SHA256', full: 'Secure Hash Algorithm, 256-bit', plain: 'A one-way fingerprint: the same input always gives the same result, but you cannot get the input back from it.', t: 'hash'},
+  {abbr: 'JSON-RPC', full: 'JSON Remote Procedure Call', plain: 'The message format MCP uses: a JSON object naming a method and its parameters.'},
+  {abbr: 'RPC', full: 'Remote Procedure Call', plain: 'Calling a function that runs on another machine.'},
+  {abbr: 'JSON', full: 'JavaScript Object Notation', plain: 'A plain-text format for structured data: {"key": "value"}.'},
+  {abbr: 'HTML', full: 'HyperText Markup Language', plain: 'The format of web pages.'},
+  {abbr: 'GET', full: 'HTTP GET', plain: 'The HTTP method for reading something without changing it.'},
+  {abbr: 'POST', full: 'HTTP POST', plain: 'The HTTP method for sending data to the server, for example a form or a token request.'},
+  {abbr: 'CORS', full: 'Cross-Origin Resource Sharing', plain: "The browser's rules on which websites' scripts may call an API on another domain."},
+  {abbr: 'CSRF', full: 'Cross-Site Request Forgery', plain: "Making a user's browser send a request they didn't intend. OAuth's state parameter defends against it.", t: 'state'},
+  {abbr: 'SSO', full: 'Single Sign-On', plain: 'Signing in once with a company account and being let into many apps.'},
+  {abbr: 'OIDC', full: 'OpenID Connect', plain: 'A layer on top of OAuth that also tells the app who the user is (ID tokens). Not used here.'},
+  {abbr: 'TTL', full: 'Time To Live', plain: 'How long something stays valid or cached.'},
+  {abbr: 'KB', full: 'Kilobyte', plain: 'About a thousand bytes of data.'},
+  {abbr: 'MC', full: 'Management Console', plain: "AMFG's web app, where the user signs in and sees the consent screen."},
+  {abbr: 'MR', full: 'Merge Request', plain: "GitLab's name for a pull request."},
+];
+
 (() => {
   const byId = Object.fromEntries(window.TERMS.map((t) => [t.id, t]));
-  const glossaryHref = (id) => {
-    const inLessons = /\/lessons\//.test(location.pathname);
-    return `${inLessons ? '../reference/' : ''}glossary.html#${id}`;
-  };
+  const byAbbr = Object.fromEntries(window.ABBRS.map((a) => [a.abbr, a]));
+  const inLessons = /\/(lessons|reference)\//.test(location.pathname);
+  const glossaryHref = (id) => `${inLessons ? '../reference/' : 'reference/'}glossary.html#${id}`;
   const style = document.createElement('style');
   style.textContent = `
     dfn[data-t] { font-style: normal; border-bottom: 1.5px dotted var(--accent, #1f6f78); cursor: help; position: relative; }
-    .term-tip { position: absolute; z-index: 50; width: min(340px, 86vw); background: #fff; color: #1b1b1b; border: 1px solid #d9d6c8; border-top: 3px solid var(--accent, #1f6f78); border-radius: 8px; padding: 12px 14px; box-shadow: 0 12px 32px rgba(0,0,0,.14); font: 14px/1.45 var(--sans, system-ui, sans-serif); }
+    abbr[data-a] { text-decoration: none; border-bottom: 1px dotted #9a978a; cursor: help; }
+    .term-tip { position: absolute; z-index: 50; width: min(340px, 86vw); background: #fff; color: #1b1b1b; border: 1px solid #d9d6c8; border-top: 3px solid var(--accent, #1f6f78); border-radius: 8px; padding: 12px 14px; box-shadow: 0 12px 32px rgba(0,0,0,.14); font: 14px/1.45 var(--sans, system-ui, sans-serif); text-align: left; text-transform: none; letter-spacing: normal; font-weight: 400; }
     .term-tip b { display: block; font-size: 15px; margin-bottom: 4px; }
     .term-tip .aka { color: #5d5d5a; font-size: 12px; margin: -2px 0 6px; }
     .term-tip .amfg { margin-top: 8px; padding-top: 8px; border-top: 1px solid #eee; color: #3a3a38; }
@@ -94,32 +131,70 @@ window.TERMS = [
   `;
   document.head.appendChild(style);
 
+  const termHtml = (t) => `<b>${t.term}</b>${t.aka ? `<div class="aka">${t.aka}</div>` : ''}<div>${t.plain}</div>${t.amfg ? `<div class="amfg">${t.amfg}</div>` : ''}
+    <div class="links"><a href="${glossaryHref(t.id)}">Glossary</a>${t.src[1] ? `<a href="${t.src[1]}" target="_blank" rel="noopener">Source: ${t.src[0]}</a>` : `<span>Source: ${t.src[0]}</span>`}</div>`;
+  const abbrHtml = (a) => `<b>${a.abbr}</b><div class="aka">${a.full}</div><div>${a.plain}</div>
+    <div class="links"><a href="${glossaryHref(a.t ?? `abbr-${a.abbr}`)}">${a.t ? 'Full glossary entry' : 'All abbreviations'}</a></div>`;
+  const tipHtml = (el) => {
+    if (el.dataset.a) return byAbbr[el.dataset.a] && abbrHtml(byAbbr[el.dataset.a]);
+    return byId[el.dataset.t] && termHtml(byId[el.dataset.t]);
+  };
+
+  const SKIP = 'pre, code, script, style, svg, dfn, abbr, a, textarea, .term-tip, .lesson-nav, title';
+  const keys = Object.keys(byAbbr).sort((a, b) => b.length - a.length).map((k) => k.replace(/[-]/g, '\\-'));
+  const pattern = new RegExp(`(?<![\\w-])(${keys.join('|')})(s?)(?![\\w-])`, 'g');
+  const hasAbbr = new RegExp(pattern.source);
+  const wrapAbbreviations = (root) => {
+    const walker = document.createTreeWalker(root, NodeFilter.SHOW_TEXT, {
+      acceptNode: (n) => (n.parentElement.closest(SKIP) || !hasAbbr.test(n.data) ? NodeFilter.FILTER_REJECT : NodeFilter.FILTER_ACCEPT),
+    });
+    const nodes = [];
+    while (walker.nextNode()) nodes.push(walker.currentNode);
+    nodes.forEach((n) => {
+      const frag = document.createDocumentFragment();
+      let last = 0;
+      n.data.replace(pattern, (match, abbr, plural, at) => {
+        frag.append(n.data.slice(last, at));
+        const el = document.createElement('abbr');
+        el.dataset.a = abbr;
+        el.textContent = abbr + plural;
+        frag.append(el);
+        last = at + match.length;
+      });
+      frag.append(n.data.slice(last));
+      n.replaceWith(frag);
+    });
+  };
+  if (document.querySelector('main')) wrapAbbreviations(document.querySelector('main'));
+
+  const TIP_TARGET = 'dfn[data-t], abbr[data-a]';
   let tip = null;
   const close = () => { tip?.remove(); tip = null; };
   const open = (el) => {
-    const t = byId[el.dataset.t];
-    if (!t) return;
+    const html = tipHtml(el);
+    if (!html) return;
     close();
     tip = document.createElement('div');
     tip.className = 'term-tip';
-    tip.innerHTML = `<b>${t.term}</b>${t.aka ? `<div class="aka">${t.aka}</div>` : ''}<div>${t.plain}</div>${t.amfg ? `<div class="amfg">${t.amfg}</div>` : ''}
-      <div class="links"><a href="${glossaryHref(t.id)}">Glossary</a>${t.src[1] ? `<a href="${t.src[1]}" target="_blank" rel="noopener">Source: ${t.src[0]}</a>` : `<span>Source: ${t.src[0]}</span>`}</div>`;
+    tip.innerHTML = html;
     document.body.appendChild(tip);
     const r = el.getBoundingClientRect();
     const left = Math.min(window.scrollX + r.left, window.scrollX + document.documentElement.clientWidth - tip.offsetWidth - 12);
     tip.style.left = `${Math.max(12, left)}px`;
     tip.style.top = `${window.scrollY + r.bottom + 8}px`;
   };
-  document.addEventListener('mouseover', (e) => { const d = e.target.closest('dfn[data-t]'); if (d) open(d); });
+  document.addEventListener('mouseover', (e) => { const d = e.target.closest(TIP_TARGET); if (d) open(d); });
   document.addEventListener('click', (e) => {
-    const d = e.target.closest('dfn[data-t]');
+    const d = e.target.closest(TIP_TARGET);
+    // Inside quiz buttons the click must still reach the quiz, so only show the tip.
+    if (d && d.closest('button, .item')) { open(d); return; }
     if (d) { e.preventDefault(); open(d); return; }
     if (tip && !e.target.closest('.term-tip')) close();
   });
   document.addEventListener('keydown', (e) => e.key === 'Escape' && close());
-  document.querySelectorAll('dfn[data-t]').forEach((d) => {
-    d.tabIndex = 0;
+  document.querySelectorAll(TIP_TARGET).forEach((d) => {
+    if (!d.closest('button')) d.tabIndex = 0;
     d.addEventListener('focus', () => open(d));
-    if (!byId[d.dataset.t]) console.warn('unknown term', d.dataset.t);
+    if (d.dataset.t && !byId[d.dataset.t]) console.warn('unknown term', d.dataset.t);
   });
 })();
