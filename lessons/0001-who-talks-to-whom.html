@@ -1,0 +1,143 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>0001 — Who talks to whom</title>
+<link rel="stylesheet" href="../assets/course.css">
+</head>
+<body>
+<main>
+<nav class="lesson-nav" data-auto></nav>
+
+<div class="kicker">Lesson 0001 · OAuth for the AMFG connector</div>
+<h1>Who talks to whom</h1>
+<p class="subtitle">Four roles, two channels, and why Claude gets a <em>code</em> before it gets a token.</p>
+
+<div class="goal"><b>After 10 minutes you can</b> name the four OAuth roles in our system, and answer the review question <i>"why doesn't Claude just take the token from the consent page?"</i> in two sentences.</div>
+
+<h2>The four roles</h2>
+<p><dfn data-t="oauth">OAuth</dfn> always has the same four parties (<a href="https://www.rfc-editor.org/rfc/rfc6749#section-1.1">RFC 6749 §1.1</a>). Once you can point at each one in AMFG, the rest of the protocol is just messages between them.</p>
+<div class="defs">
+  <div><span class="actor user">Resource owner</span></div><div>The AMFG user who clicks <b>Allow</b>. Their data is what's being shared.</div>
+  <div><span class="actor claude">Client</span></div><div>Claude (claude.ai or Claude Code). It wants to act for the user.</div>
+  <div><span class="actor engine">Authorization server</span></div><div>engine-service under <code>/public-api/v1/oauth</code>. It checks who's asking and hands out codes and <dfn data-t="access-token">tokens</dfn>.</div>
+  <div><span class="actor engine">Resource server</span></div><div>engine-service's <code>/mcp</code>. It accepts tokens and runs the tools.</div>
+</div>
+<p class="aside">The spec explicitly allows the <dfn data-t="authorization-server">authorization server</dfn> and the <dfn data-t="resource-server">resource server</dfn> to be the same server (<a href="https://www.rfc-editor.org/rfc/rfc6749#section-1.1">§1.1</a>). That's our choice: both live in engine-service.</p>
+<p>The <span class="actor mc">Management Console</span> is <i>not</i> a fifth role. It's the authorization server's login and <dfn data-t="consent">consent</dfn> screen, borrowed so users sign in the way they always do.</p>
+
+<h2>Two channels</h2>
+<p>Messages travel two ways, and that difference explains most of OAuth's design.</p>
+<figure>
+<svg viewBox="0 0 720 330" role="img" aria-label="Front channel through the browser and back channel server to server">
+  <defs><marker id="ar" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto"><path d="M0,0 L10,5 L0,10z" fill="#5d5d5a"/></marker></defs>
+  <g font-family="Inter, system-ui, sans-serif" font-size="12">
+    <rect x="10" y="10" width="700" height="140" rx="10" fill="#fdf3ee" stroke="#e7c9bb" stroke-dasharray="5 4"/>
+    <text x="22" y="30" fill="#b4593a" font-weight="700" letter-spacing="1.5">FRONT CHANNEL · through the user's browser (visible, can leak)</text>
+    <rect x="10" y="175" width="700" height="140" rx="10" fill="#eef6f7" stroke="#b9d8db"/>
+    <text x="22" y="195" fill="#1f6f78" font-weight="700" letter-spacing="1.5">BACK CHANNEL · Claude ↔ engine-service directly (HTTPS, never in a URL bar)</text>
+
+    <rect x="30" y="55" width="140" height="44" rx="6" fill="#fff" stroke="#b4593a"/><text x="100" y="82" text-anchor="middle" fill="#b4593a" font-weight="700">Claude</text>
+    <rect x="290" y="55" width="140" height="44" rx="6" fill="#fff" stroke="#5b6f2e"/><text x="360" y="76" text-anchor="middle" fill="#5b6f2e" font-weight="700">Mgmt Console</text><text x="360" y="91" text-anchor="middle" fill="#5d5d5a" font-size="10.5">login + consent</text>
+    <rect x="550" y="55" width="140" height="44" rx="6" fill="#fff" stroke="#1f6f78"/><text x="620" y="76" text-anchor="middle" fill="#1f6f78" font-weight="700">engine-service</text><text x="620" y="91" text-anchor="middle" fill="#5d5d5a" font-size="10.5">/oauth/authorize</text>
+    <path d="M110,55 C200,36 520,36 610,53" fill="none" stroke="#5d5d5a" marker-end="url(#ar)"/><text x="360" y="48" text-anchor="middle" fill="#5d5d5a">① browser → /authorize</text>
+    <line x1="548" y1="88" x2="432" y2="88" stroke="#5d5d5a" marker-end="url(#ar)"/><text x="440" y="112" fill="#5d5d5a">② → login, Allow</text>
+    <path d="M300,99 C250,135 150,135 120,101" fill="none" stroke="#b4593a" stroke-width="2" marker-end="url(#ar)"/><text x="160" y="140" fill="#b4593a" font-weight="700">③ redirect back with ?<dfn data-t="authorization-code">code</dfn>=…</text>
+
+    <rect x="30" y="225" width="140" height="44" rx="6" fill="#fff" stroke="#b4593a"/><text x="100" y="252" text-anchor="middle" fill="#b4593a" font-weight="700">Claude</text>
+    <rect x="550" y="225" width="140" height="44" rx="6" fill="#fff" stroke="#1f6f78"/><text x="620" y="246" text-anchor="middle" fill="#1f6f78" font-weight="700">engine-service</text><text x="620" y="261" text-anchor="middle" fill="#5d5d5a" font-size="10.5">/oauth/token · /mcp</text>
+    <line x1="170" y1="238" x2="548" y2="238" stroke="#1f6f78" stroke-width="2" marker-end="url(#ar)"/><text x="215" y="232" fill="#1f6f78" font-weight="700">④ POST code → /token</text>
+    <line x1="548" y1="256" x2="172" y2="256" stroke="#1f6f78" stroke-width="2" marker-end="url(#ar)"/><text x="300" y="276" fill="#1f6f78">⑤ access + refresh token</text>
+    <text x="215" y="302" fill="#5d5d5a">⑥ every tool call: /mcp with "Authorization: Bearer …"</text>
+  </g>
+</svg>
+<figcaption>The code is the only secret that ever crosses the browser. Tokens only move on the <dfn data-t="back-channel">back channel</dfn>.</figcaption>
+</figure>
+<p>The <b><dfn data-t="front-channel">front channel</dfn></b> is a browser redirect. Anything in it can end up in browser history, proxy logs, or an extension's view of the URL. So OAuth only lets a <b>code</b> travel there: it is single-use and short-lived (<a href="https://www.rfc-editor.org/rfc/rfc6749#section-4.1.2">RFC 6749 §4.1.2</a> suggests 10 minutes at most; ours is 5).</p>
+<p>The <b>back channel</b> is Claude calling engine-service directly over HTTPS. Only there does the code get swapped for real tokens (<a href="https://aaronparecki.com/oauth-2-simplified/#web-server-apps">Parecki, "Web server apps"</a>).</p>
+<div class="callout">A stolen code is still useless on its own. Lesson 0002 shows the extra lock, <b><dfn data-t="pkce">PKCE</dfn></b>, that makes sure only the Claude that started the flow can redeem it.</div>
+
+<h2>Practice</h2>
+
+<div class="exercise order" id="order-steps" data-solution="a,b,c,d,e,f,g">
+  <div class="prompt">Put the AMFG handshake in order. Click a step to move it down; click again to send it back.</div>
+  <div class="order-pool">
+    <div class="item" data-id="a">Claude calls <code>/mcp</code> without a token and gets <code>401</code></div>
+    <div class="item" data-id="b">Claude sends the user's browser to <code>/oauth/authorize</code></div>
+    <div class="item" data-id="c">The Management Console asks the user to sign in and click Allow</div>
+    <div class="item" data-id="d"><code>/approve</code> redirects the browser back to Claude with a code</div>
+    <div class="item" data-id="e">Claude posts the code to <code>/oauth/token</code></div>
+    <div class="item" data-id="f">engine-service returns an access token and a refresh token</div>
+    <div class="item" data-id="g">Claude calls <code>/mcp</code> again, now with <code>Authorization: Bearer</code></div>
+  </div>
+  <div class="order-picked"></div>
+  <button class="btn primary check">Check order</button> <button class="btn reset">Reset</button>
+  <div class="feedback" data-right="Right: discover, send the browser off, consent, code back, swap it, use the token." data-wrong="Not quite. Hint: nothing can be swapped before the user has clicked Allow."></div>
+</div>
+
+<div class="exercise sort" id="sort-channels">
+  <div class="prompt">Front channel (through the browser) or back channel (server to server)?</div>
+  <div class="sort-row" data-answer="front"><span>Claude sends the browser to <code>/authorize</code></span><button class="btn" data-pick="front">Front</button><button class="btn" data-pick="back">Back</button></div>
+  <div class="sort-row" data-answer="back"><span>Claude swaps the code at <code>/token</code></span><button class="btn" data-pick="front">Front</button><button class="btn" data-pick="back">Back</button></div>
+  <div class="sort-row" data-answer="front"><span>The consent page sends the user back with <code>?code=</code></span><button class="btn" data-pick="front">Front</button><button class="btn" data-pick="back">Back</button></div>
+  <div class="sort-row" data-answer="back"><span>Claude calls a tool on <code>/mcp</code></span><button class="btn" data-pick="front">Front</button><button class="btn" data-pick="back">Back</button></div>
+  <div class="sort-row" data-answer="back"><span>Claude refreshes an expired access token</span><button class="btn" data-pick="front">Front</button><button class="btn" data-pick="back">Back</button></div>
+  <button class="btn primary check">Check</button>
+  <div class="feedback" data-right="Exactly: only the redirects touch the browser. Everything carrying a token is back channel." data-wrong="Red rows are wrong. Rule of thumb: does a URL bar ever show it? Then it's front channel."></div>
+</div>
+
+<div class="exercise mcq" data-answer="as">
+  <div class="prompt">In AMFG, which OAuth role does engine-service play at <code>/oauth/token</code>?</div>
+  <div class="opts">
+    <button class="opt" data-key="rs">Resource server</button>
+    <button class="opt" data-key="as">Authorization server</button>
+    <button class="opt" data-key="cl">Client application</button>
+    <button class="opt" data-key="ro">Resource owner</button>
+  </div>
+  <div class="feedback" data-right="Yes. /oauth/* is the authorization server; /mcp is the resource server. Same service, two roles." data-wrong="Look again: who hands out tokens, and who only accepts them?"></div>
+</div>
+
+<div class="exercise mcq" data-answer="leak">
+  <div class="prompt">Why does <code>/approve</code> send back a code instead of the access token itself?</div>
+  <div class="opts">
+    <button class="opt" data-key="size">Codes are smaller, so redirects stay under browser length limits</button>
+    <button class="opt" data-key="leak">The browser URL leaks, so only short-lived codes travel there</button>
+    <button class="opt" data-key="json">Claude cannot read query parameters, only plain JSON response bodies</button>
+    <button class="opt" data-key="sig">Tokens need a signature that only the console can create</button>
+  </div>
+  <div class="feedback" data-right="Right. The front channel can leak, so it only carries a single-use, short-lived code." data-wrong="Think about where a redirect URL can end up: history, logs, extensions."></div>
+</div>
+
+<div class="exercise mcq" data-answer="ui">
+  <div class="prompt">The Management Console isn't one of the four OAuth roles. What is it in this flow?</div>
+  <div class="opts">
+    <button class="opt" data-key="rs">A second resource server holding the tickets</button>
+    <button class="opt" data-key="ui">The authorization server's login and consent screen</button>
+    <button class="opt" data-key="cl">The client Claude redirects users back into</button>
+    <button class="opt" data-key="ro">The resource owner acting for every user</button>
+  </div>
+  <div class="feedback" data-right="Yes. It's engine-service's user interface for sign-in and consent; /approve is the step that actually issues the code." data-wrong="Not that one. Who decides whether a code gets issued, and where does the user click Allow?"></div>
+</div>
+
+<div class="exercise recall">
+  <div class="prompt">Defend it. A reviewer asks: <i>"Why can't Claude just read the token off the consent page?"</i> Answer in two sentences, then compare.</div>
+  <textarea placeholder="Your answer…"></textarea>
+  <button class="btn reveal">Show model answer</button>
+  <div class="model">The consent page lives in the browser, which is the front channel. URLs there can leak through history, logs or extensions, so it only carries a 5-minute, single-use code. Claude swaps that code for tokens on a direct HTTPS call to <code>/oauth/token</code>, and with PKCE (next lesson) only the Claude that started the flow can do that swap.</div>
+</div>
+
+<div class="score"></div>
+
+<h3>Read next (primary source)</h3>
+<p><a href="https://aaronparecki.com/oauth-2-simplified/">OAuth 2 Simplified, by Aaron Parecki</a>, the sections "Roles" and "Web server apps". It takes 10 minutes. Parecki edits the OAuth 2.1 spec, and this is the clearest short version of what you just practised.</p>
+<p>Quick reference: <a href="../reference/handshake.html">the AMFG handshake cheat sheet</a> · every term explained: <a href="../reference/glossary.html">glossary</a>. Dotted words in this lesson open a definition on hover or tap.</p>
+
+
+<footer><nav class="lesson-nav" data-auto></nav></footer>
+</main>
+<script src="../assets/quiz.js"></script>
+<script src="../assets/terms.js"></script>
+<script src="../assets/nav.js"></script>
+</body>
+</html>

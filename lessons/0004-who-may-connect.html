@@ -1,0 +1,163 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>0004 — Who may connect: CIMD, not DCR</title>
+<link rel="stylesheet" href="../assets/course.css">
+<style>
+  pre { font: 0.78rem/1.5 var(--mono); background: #f6f4ea; border: 1px solid var(--rule); border-radius: 6px; padding: 12px 14px; overflow-x: auto; margin: 10px 0 18px; }
+  table { width: 100%; border-collapse: collapse; font: 0.88rem/1.45 var(--sans); margin: 10px 0 20px; }
+  th, td { text-align: left; vertical-align: top; padding: 8px 8px; border-bottom: 1px solid var(--rule); }
+  th { font-size: 0.72rem; letter-spacing: .08em; text-transform: uppercase; color: var(--soft); }
+  td.ok { color: var(--good); font-weight: 600; } td.no { color: var(--bad); font-weight: 600; }
+  .consent { border: 1px solid var(--rule); border-radius: 10px; background: #fff; padding: 18px 20px; font: 0.9rem/1.5 var(--sans); max-width: 460px; margin: 10px auto 6px; box-shadow: 0 6px 18px rgba(0,0,0,.06); }
+  .consent h4 { margin: 0 0 4px; font-size: 1.05rem; }
+  .consent .muted { color: var(--soft); font-size: .82rem; }
+  .consent .warn { background: #f6f4ea; border-radius: 6px; padding: 8px 10px; margin: 10px 0; font-size: .82rem; }
+  .consent .btns { text-align: right; margin-top: 10px; }
+  .consent .btns span { display: inline-block; padding: 6px 14px; border-radius: 6px; border: 1px solid var(--rule); margin-left: 6px; font-weight: 600; }
+  .consent .btns span.p { background: var(--accent); color: #fff; border-color: var(--accent); }
+  .tag { font: 600 .68rem var(--sans); color: var(--accent); }
+</style>
+</head>
+<body>
+<main>
+<nav class="lesson-nav" data-auto></nav>
+
+<div class="kicker">Lesson 0004 · OAuth for the AMFG connector</div>
+<h1>Who may connect: CIMD, not DCR</h1>
+<p class="subtitle">A client id that is a URL, a short allowlist, and a strict match on where the browser goes back to.</p>
+
+<div class="goal"><b>After 12 minutes you can</b> explain how engine-service decides a client is really Claude, why we allowlist on top of CIMD, why we don't support DCR, and which <code>/authorize</code> errors may never redirect.</div>
+
+<h2>The decision at /authorize</h2>
+<p>Every flow starts with <code>GET /oauth/authorize?client_id=…&amp;redirect_uri=…</code>. Before anything else, engine-service must answer two questions:</p>
+<ol>
+  <li><b>Is this a client we accept?</b></li>
+  <li><b>Does that <dfn data-t="redirect-uri">redirect URI</dfn> really belong to it?</b> If not, we'd post the user's code to an attacker's URL, and with a public client that is half the job done.</li>
+</ol>
+
+<h2>Three ways to know a client</h2>
+<table>
+  <tr><th>Approach</th><th>How it works</th><th>For us</th></tr>
+  <tr><td><b>Pre-registration</b></td><td>An admin registers the client by hand and hands out a random <dfn data-t="client-id">client id</dfn>.</td><td class="no">Claude would need a separate registration with every MCP server in the world.</td></tr>
+  <tr><td><b><dfn data-t="dcr">DCR</dfn></b></td><td>The client <code>POST</code>s its details to a public <code>/register</code> endpoint and gets an id back.</td><td class="no">An open, unauthenticated write endpoint: anyone can create clients, call themselves "Claude", and fill the table. Deprecated by MCP 2026-07-28.</td></tr>
+  <tr><td><b><dfn data-t="cimd">CIMD</dfn></b></td><td>The client id <i>is</i> an HTTPS URL. The server fetches it and reads a JSON document. Hosting the document on that domain is the proof of identity.</td><td class="ok">No registration, no table. Advertised with <code>client_id_metadata_document_supported: true</code>.</td></tr>
+</table>
+<p>Claude's two documents:</p>
+<pre>GET https://claude.ai/oauth/mcp-oauth-client-metadata
+{ "client_id": "https://claude.ai/oauth/mcp-oauth-client-metadata",
+  "client_name": "Claude",
+  "redirect_uris": ["https://claude.ai/api/mcp/auth_callback"],
+  "token_endpoint_auth_method": "none" }
+
+GET https://claude.ai/oauth/claude-code-client-metadata
+{ …, "client_name": "Claude Code",
+  "redirect_uris": ["http://localhost/callback", "http://127.0.0.1/callback"] }</pre>
+
+<h2>Why an allowlist on top of CIMD</h2>
+<p>CIMD proves "this document is hosted at this URL". It doesn't prove "this is a client our customers should trust". With an open CIMD, an attacker could host <code>https://evil.example/claude</code> with <code>"client_name": "Claude"</code> and send AMFG users a link. They'd see a consent screen asking them to allow "Claude".</p>
+<p>So <code>OAuthClients.isAllowed</code> accepts only the two Claude ids, plus anything in <code>MCP_OAUTH_EXTRA_CLIENT_IDS</code> (empty by default). Anything else gets a 400 before we fetch a thing.</p>
+<p class="aside">The allowlist also limits <dfn data-t="ssrf">SSRF</dfn>: CIMD makes our server fetch a URL taken from the request, and we only ever fetch allowlisted ones.</p>
+
+<h3>Fetching the document safely</h3>
+<div class="defs">
+  <div>Limits</div><div>5 s timeout, <b>no redirects</b>, at most 5 KB, only HTTP 200 accepted.</div>
+  <div>Validation</div><div><code>client_id</code> inside must equal the URL; <code>redirect_uris</code> must be non-empty; no <code>client_secret</code>; auth method <code>none</code> or absent.</div>
+  <div>Cache</div><div>A good document is cached for 5 minutes.</div>
+  <div><dfn data-t="pinned-metadata">Pinned fallback</dfn></div><div>claude.ai's bot protection sometimes blocks server-side fetches (<a href="https://github.com/anthropics/claude-ai-mcp/issues/650">claude-ai-mcp#650</a>). We then use our built-in copy of Claude's document, cached only 60 s so we retry the live one soon.</div>
+</div>
+
+<h2>Matching the redirect URI</h2>
+<p>The requested <code>redirect_uri</code> must <b>exactly</b> equal one in the client's document, string for string. There are two refinements:</p>
+<ul>
+  <li><b>Loopback ignores the port.</b> Claude Code starts a tiny local server on a random port each time, so <code>http://localhost:53682/callback</code> matches the registered <code>http://localhost/callback</code> (<a href="https://www.rfc-editor.org/rfc/rfc8252#section-7.3">RFC 8252 §7.3</a>). This only applies to <code>http</code> on <code>localhost</code>, <code>127.0.0.1</code> or <code>[::1]</code>.</li>
+  <li><b>No fragments.</b> OAuth 2.1 bans <code>#</code> in redirect URIs. We check the raw string, because a bare <code>#</code> leaves <code>URL.hash</code> empty and would slip past a parsed check.</li>
+</ul>
+
+<h2>Two kinds of error</h2>
+<p>If the client or the redirect URI is wrong, we <b>can't redirect</b>: we'd be sending the browser, with an error, to a URL nobody vouched for. That is an <dfn data-t="open-redirect">open redirector</dfn> (<a href="https://www.rfc-editor.org/rfc/rfc6749#section-4.1.2.1">RFC 6749 §4.1.2.1</a>). So those errors get a plain <b>400 page</b>.</p>
+<p>Every other problem (no <code>state</code>, no S256 challenge, a wrong <code>resource</code>, a <code>response_type</code> other than <code>code</code>) goes back to the now-trusted redirect URI as <code>?error=…&amp;error_description=…&amp;state=…&amp;iss=…</code>, so Claude can show the user a proper message.</p>
+
+<h2>What the user sees</h2>
+<p>The consent screen shows the facts we verified, not just the name the client chose:</p>
+<div class="consent">
+  <h4>Allow Claude Code to access Test88?</h4>
+  <div class="muted">Claude Code (claude.ai) will act on your behalf in Test88.</div>
+  <p style="margin:10px 0 4px"><b>It will be able to:</b></p>
+  <ul style="margin:0 0 6px;padding-left:20px"><li>View tickets, parts and quotes</li><li>Create and change tickets, parts and quotes, including sending quotes</li></ul>
+  <div>☐ Read-only access</div>
+  <div class="warn">This app runs on your computer and returns to localhost:53682. Allow it only if you started this connection yourself.</div>
+  <div class="muted">After you choose, you will be sent to localhost:53682.</div>
+  <div class="btns"><span>Deny</span><span class="p">Allow</span></div>
+</div>
+<figcaption style="text-align:center">The Management Console consent card, filled from <code>GET /oauth/authorization-request</code>: client name, <span class="tag">client host</span> (from the client id URL), <span class="tag">redirect host</span>, and a warning when every redirect is loopback.</figcaption>
+
+<h2>Practice</h2>
+
+<div class="exercise sort" id="sort-redirect">
+  <div class="prompt">Claude Code is registered with <code>http://localhost/callback</code>. Is the requested redirect accepted?</div>
+  <div class="sort-row" data-answer="ok"><span><code>http://localhost:53682/callback</code></span><button class="btn" data-pick="ok">Accepted</button><button class="btn" data-pick="no">Refused</button></div>
+  <div class="sort-row" data-answer="no"><span><code>https://localhost:53682/callback</code></span><button class="btn" data-pick="ok">Accepted</button><button class="btn" data-pick="no">Refused</button></div>
+  <div class="sort-row" data-answer="no"><span><code>http://localhost:53682/callback#x</code></span><button class="btn" data-pick="ok">Accepted</button><button class="btn" data-pick="no">Refused</button></div>
+  <div class="sort-row" data-answer="no"><span><code>http://localhost:53682/other</code></span><button class="btn" data-pick="ok">Accepted</button><button class="btn" data-pick="no">Refused</button></div>
+  <div class="sort-row" data-answer="no"><span><code>http://evil.example:53682/callback</code></span><button class="btn" data-pick="ok">Accepted</button><button class="btn" data-pick="no">Refused</button></div>
+  <button class="btn primary check">Check</button>
+  <div class="feedback" data-right="Exactly. Only the port may vary, and only for http loopback." data-wrong="Red rows are wrong. Only the port is allowed to differ; scheme, host, path and fragment must match."></div>
+</div>
+
+<div class="exercise sort" id="sort-errors">
+  <div class="prompt">How does <code>/oauth/authorize</code> answer?</div>
+  <div class="sort-row" data-answer="page"><span><code>client_id</code> isn't on the allowlist</span><button class="btn" data-pick="page">400 page</button><button class="btn" data-pick="redir">Redirect with error</button></div>
+  <div class="sort-row" data-answer="redir"><span>No <code>code_challenge</code></span><button class="btn" data-pick="page">400 page</button><button class="btn" data-pick="redir">Redirect with error</button></div>
+  <div class="sort-row" data-answer="page"><span><code>redirect_uri</code> isn't in the client's document</span><button class="btn" data-pick="page">400 page</button><button class="btn" data-pick="redir">Redirect with error</button></div>
+  <div class="sort-row" data-answer="redir"><span><code>resource</code> names another API</span><button class="btn" data-pick="page">400 page</button><button class="btn" data-pick="redir">Redirect with error</button></div>
+  <div class="sort-row" data-answer="redir"><span><code>state</code> is missing</span><button class="btn" data-pick="page">400 page</button><button class="btn" data-pick="redir">Redirect with error</button></div>
+  <button class="btn primary check">Check</button>
+  <div class="feedback" data-right="Right. Once the client and its redirect are verified, errors can safely go back to it." data-wrong="Red rows are wrong. Ask: do we already trust the redirect URI at this point?"></div>
+</div>
+
+<div class="exercise mcq" data-answer="name">
+  <div class="prompt">CIMD already proves the document is hosted at the client id URL. Why also allowlist?</div>
+  <div class="opts">
+    <button class="opt" data-key="speed">Fetching documents is too slow for every login</button>
+    <button class="opt" data-key="name">Anyone can host a document that calls itself "Claude"; the allowlist decides who we trust</button>
+    <button class="opt" data-key="spec">The MCP spec forbids unknown CIMD clients</button>
+    <button class="opt" data-key="db">CIMD clients need a row in the database</button>
+  </div>
+  <div class="feedback" data-right="Yes. CIMD proves where a client lives, not that it's one we want. It also keeps our server from fetching arbitrary URLs." data-wrong="Think about a phishing link with a convincing client name."></div>
+</div>
+
+<div class="exercise mcq" data-answer="pinned">
+  <div class="prompt">claude.ai's bot protection blocks our fetch of Claude's metadata. What happens?</div>
+  <div class="opts">
+    <button class="opt" data-key="fail">The user sees "Invalid client" until claude.ai recovers</button>
+    <button class="opt" data-key="pinned">We use our pinned copy of Claude's document, cached 60 s, and retry the live one after</button>
+    <button class="opt" data-key="any">We accept any redirect URI for this login</button>
+    <button class="opt" data-key="dcr">We fall back to dynamic registration</button>
+  </div>
+  <div class="feedback" data-right="Right. The pinned copy only exists for the two Claude ids." data-wrong="Look at the Pinned fallback row."></div>
+</div>
+
+<div class="exercise recall">
+  <div class="prompt">Defend it. A reviewer asks: <i>"Every MCP tutorial shows Dynamic Client Registration. Why didn't we build it?"</i></div>
+  <textarea placeholder="Your answer…"></textarea>
+  <button class="btn reveal">Show model answer</button>
+  <div class="model">DCR is a public, unauthenticated endpoint that writes rows: anyone could register clients with any name and grow the table, and MCP 2026-07-28 deprecates it in favour of CIMD. With CIMD, Claude's client id is a URL on claude.ai, so there's nothing to register or store. We still allowlist the two Claude ids, so a look-alike "Claude" hosted elsewhere is refused before we even fetch it.</div>
+</div>
+
+<div class="score"></div>
+
+<h3>Read next (primary source)</h3>
+<p><a href="https://modelcontextprotocol.io/specification/2026-07-28/basic/authorization/client-registration">MCP: client registration</a> (CIMD, DCR and pre-registration side by side), then <a href="https://www.rfc-editor.org/rfc/rfc9700.html#section-4.1">RFC 9700 §4.1</a> on redirect URI attacks.</p>
+<p>Quick reference: <a href="../reference/handshake.html">the AMFG handshake</a> · <a href="../reference/glossary.html">glossary</a>.</p>
+
+
+<footer><nav class="lesson-nav" data-auto></nav></footer>
+</main>
+<script src="../assets/quiz.js"></script>
+<script src="../assets/terms.js"></script>
+<script src="../assets/nav.js"></script>
+</body>
+</html>

@@ -1,0 +1,186 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>0005 — Tokens, rotation and families</title>
+<link rel="stylesheet" href="../assets/course.css">
+<style>
+  pre { font: 0.78rem/1.5 var(--mono); background: #f6f4ea; border: 1px solid var(--rule); border-radius: 6px; padding: 12px 14px; overflow-x: auto; margin: 10px 0 18px; }
+  table { width: 100%; border-collapse: collapse; font: 0.86rem/1.45 var(--sans); margin: 10px 0 20px; }
+  th, td { text-align: left; vertical-align: top; padding: 7px 8px; border-bottom: 1px solid var(--rule); }
+  th { font-size: 0.72rem; letter-spacing: .08em; text-transform: uppercase; color: var(--soft); }
+  td:first-child { font-family: var(--mono); font-size: .8rem; white-space: nowrap; }
+</style>
+</head>
+<body>
+<main>
+<nav class="lesson-nav" data-auto></nav>
+
+<div class="kicker">Lesson 0005 · OAuth for the AMFG connector</div>
+<h1>Tokens, rotation and families</h1>
+<p class="subtitle">One Allow click becomes a family of rows. Use a dead one twice, and the whole family dies.</p>
+
+<div class="goal"><b>After 15 minutes you can</b> read an <code>oauth_tokens</code> row, explain why we store only hashes, walk through a refresh and a replay, and defend <i>"why not JWTs?"</i></div>
+
+<h2>What Claude gets back</h2>
+<pre>POST /oauth/token   (application/x-www-form-urlencoded)
+grant_type=authorization_code&amp;code=…&amp;code_verifier=…&amp;redirect_uri=…&amp;client_id=…&amp;resource=…
+
+200 OK   Cache-Control: no-store
+{ "access_token": "3f9c…", "token_type": "Bearer", "expires_in": 3600,
+  "refresh_token": "a71e…", "scope": "mcp:read mcp:write offline_access" }</pre>
+<div class="defs">
+  <div><dfn data-t="authorization-code">Authorization code</dfn></div><div><b>5 minutes</b>, single use. Fixed.</div>
+  <div><dfn data-t="access-token">Access token</dfn></div><div><b>1 hour</b>. Sent on every <code>/mcp</code> call. Configurable: <code>MCP_OAUTH_ACCESS_TOKEN_LIFETIME_S</code>.</div>
+  <div><dfn data-t="refresh-token">Refresh token</dfn></div><div><b>30 days</b>. Only ever sent to <code>/token</code>. Configurable: <code>MCP_OAUTH_REFRESH_TOKEN_LIFETIME_S</code>.</div>
+</div>
+<p>The short access token limits the damage if one leaks. The refresh token means the user doesn't have to click Allow every hour. It's issued because Claude asks for the <code>offline_access</code> scope.</p>
+
+<h2>Opaque, and stored only as a hash</h2>
+<p>Our tokens are <dfn data-t="opaque-token">opaque</dfn>: 256 random bits as hex, with no meaning inside. The database never sees the token itself, only its SHA-256 <dfn data-t="hash">hash</dfn>. When Claude calls <code>/mcp</code>, we hash the bearer value and look for a row that is the right type, not revoked and not expired.</p>
+<p class="aside">Passwords need a salt and a slow hash because people pick guessable ones. A 256-bit random token can't be guessed, so a plain SHA-256 is safe, and it lets us find the row by value in one indexed lookup.</p>
+<div class="callout">A database dump or a stray log of the table gives an attacker <b>nothing usable</b>: you can't send a hash as a <dfn data-t="bearer">bearer</dfn> token, and you can't reverse it.</div>
+
+<h2>The table</h2>
+<p>The <dfn data-t="oauth-tokens-table">oauth_tokens</dfn> table has one row per code, access token or refresh token:</p>
+<table>
+  <tr><th>Column</th><th>Holds</th></tr>
+  <tr><td>type</td><td><code>AUTHORIZATION_CODE</code>, <code>ACCESS_TOKEN</code> or <code>REFRESH_TOKEN</code></td></tr>
+  <tr><td>token_hash</td><td>SHA-256 of the value. Unique index.</td></tr>
+  <tr><td>app_id</td><td>The AMFG app the user approved for (foreign key to <code>apps</code>)</td></tr>
+  <tr><td>user_id</td><td>The real user who clicked Allow (kept for audit; lesson 0006)</td></tr>
+  <tr><td>client_id</td><td>Claude's CIMD URL</td></tr>
+  <tr><td>scope</td><td>e.g. <code>mcp:read offline_access</code></td></tr>
+  <tr><td>resource</td><td><code>https://…/mcp</code>, checked on every call (lesson 0003)</td></tr>
+  <tr><td>family_id</td><td>Shared by everything from one Allow. Indexed.</td></tr>
+  <tr><td>metadata</td><td>Codes only: <code>redirectUri</code>, <code>codeChallenge</code>, <code>codeChallengeMethod</code></td></tr>
+  <tr><td>expires_at</td><td>Indexed, for the cleanup job</td></tr>
+  <tr><td>revoked_at</td><td>Set when used, rotated out or revoked. <b>The row is kept.</b></td></tr>
+</table>
+
+<h2>Families: one Allow, one grant</h2>
+<p>When <code>/approve</code> creates the code, it also creates a new <code>family_id</code>. Every token that grows from that code carries the same id. That family is the <dfn data-t="grant">grant</dfn>.</p>
+<figure>
+<svg viewBox="0 0 720 230" role="img" aria-label="A token family over time">
+  <defs><marker id="a5" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto"><path d="M0,0 L10,5 L0,10z" fill="#5d5d5a"/></marker></defs>
+  <g font-family="Inter, system-ui, sans-serif" font-size="12">
+    <text x="10" y="18" fill="#5d5d5a" font-weight="700" letter-spacing="1.2">family_id = 7b2e…</text>
+    <rect x="10" y="40" width="110" height="40" rx="6" fill="#f1efe4" stroke="#bbb"/><text x="65" y="58" text-anchor="middle" fill="#5d5d5a">code</text><text x="65" y="73" text-anchor="middle" fill="#a3322b" font-size="10.5">revoked: used</text>
+    <line x1="122" y1="60" x2="168" y2="60" stroke="#5d5d5a" marker-end="url(#a5)"/>
+    <rect x="170" y="30" width="110" height="28" rx="6" fill="#fff" stroke="#1f6f78"/><text x="225" y="49" text-anchor="middle" fill="#1f6f78">access A1 · 1 h</text>
+    <rect x="170" y="64" width="110" height="40" rx="6" fill="#f1efe4" stroke="#bbb"/><text x="225" y="82" text-anchor="middle" fill="#5d5d5a">refresh R1</text><text x="225" y="97" text-anchor="middle" fill="#a3322b" font-size="10.5">revoked: rotated</text>
+    <line x1="282" y1="84" x2="328" y2="84" stroke="#5d5d5a" marker-end="url(#a5)"/><text x="286" y="120" fill="#5d5d5a" font-size="11">refresh</text>
+    <rect x="330" y="30" width="110" height="28" rx="6" fill="#fff" stroke="#1f6f78"/><text x="385" y="49" text-anchor="middle" fill="#1f6f78">access A2 · 1 h</text>
+    <rect x="330" y="64" width="110" height="40" rx="6" fill="#f1efe4" stroke="#bbb"/><text x="385" y="82" text-anchor="middle" fill="#5d5d5a">refresh R2</text><text x="385" y="97" text-anchor="middle" fill="#a3322b" font-size="10.5">revoked: rotated</text>
+    <line x1="442" y1="84" x2="488" y2="84" stroke="#5d5d5a" marker-end="url(#a5)"/>
+    <rect x="490" y="30" width="110" height="28" rx="6" fill="#fff" stroke="#1f6f78"/><text x="545" y="49" text-anchor="middle" fill="#1f6f78">access A3 · 1 h</text>
+    <rect x="490" y="64" width="110" height="28" rx="6" fill="#fff" stroke="#1f6f78" stroke-width="2"/><text x="545" y="83" text-anchor="middle" fill="#1f6f78" font-weight="700">refresh R3 · live</text>
+
+    <rect x="10" y="150" width="700" height="70" rx="8" fill="#f7e5e3" stroke="#e3b5b0"/>
+    <text x="24" y="172" fill="#a3322b" font-weight="700">Replay: someone sends R1 again</text>
+    <text x="24" y="192" fill="#1b1b1b">R1 is found but already revoked → revokeFamily(7b2e…) → A3 and R3 are revoked too → invalid_grant.</text>
+    <text x="24" y="210" fill="#1b1b1b">Thief and real Claude are both locked out; the user reconnects with a fresh Allow.</text>
+  </g>
+</svg>
+<figcaption>Normal <dfn data-t="rotation">rotation</dfn> revokes only the old refresh token; an old access token simply runs out within the hour. A <dfn data-t="replay">replay</dfn> revokes everything in the family at once.</figcaption>
+</figure>
+
+<h2>Rotation and replay</h2>
+<p>Each refresh returns a <b>new</b> refresh token and revokes the old one (<a href="https://www.rfc-editor.org/rfc/rfc9700.html#section-4.14.2">RFC 9700 §4.14.2</a>). A legitimate client always holds just the latest one. So if a revoked code or refresh token ever comes back, two parties have a copy, and we can't tell which is the thief.</p>
+<p>The model's answer is <code>revokeReplayedGrant</code>: revoke the whole family and return <code>invalid_grant</code>. That's why used rows are kept with <code>revoked_at</code> rather than deleted. Deleting them would make a replay look like an unknown token, and nothing else would be revoked.</p>
+<p class="aside">The same applies to codes: a code redeemed twice revokes the tokens the first redemption issued (test: <i>"Should revoke the tokens of a code that is redeemed again"</i>).</p>
+<p>The cost: a buggy client that retries a refresh with the old token disconnects itself. That's the trade the spec recommends. It doesn't happen in normal Claude use, and the fix is just to reconnect.</p>
+
+<h2>Ending a grant</h2>
+<ul>
+  <li><b><dfn data-t="revocation">Revocation</dfn>:</b> <code>POST /oauth/revoke</code> with any access or refresh token from the family revokes the whole family. It always answers <code>200 {}</code>, even for unknown tokens (<a href="https://www.rfc-editor.org/rfc/rfc7009#section-2.2">RFC 7009 §2.2</a>), so it can't be used to probe which tokens exist. This is how a client ends its grant for good on our side.</li>
+  <li><b><dfn data-t="cleanup-job">Cleanup</dfn>:</b> the hourly <code>OAuthTokenCleanup</code> job deletes a family only when its <i>newest</i> <code>expires_at</code> is over a day old. It deletes whole families, never single rows, so a replay is still detected right up until the grant is gone.</li>
+</ul>
+
+<h2>Why not JWTs?</h2>
+<p>A JWT access token carries its claims and a signature, so an API can check it without a database. The catch is that it stays valid until it expires: revoking it means building a blocklist, which is a database lookup again.</p>
+<p>We have one service that both issues and checks tokens. The lookup is one indexed read per <code>/mcp</code> call, and it buys <b>instant revocation</b>: revocation and replay detection take effect on the very next call (test: <i>"Should reject an access token after its grant is revoked"</i>).</p>
+
+<h2>Practice</h2>
+
+<div class="exercise sort" id="sort-stored">
+  <div class="prompt">Is it stored in <code>oauth_tokens</code>?</div>
+  <div class="sort-row" data-answer="yes"><span>SHA-256 of the access token</span><button class="btn" data-pick="yes">Stored</button><button class="btn" data-pick="no">Never stored</button></div>
+  <div class="sort-row" data-answer="no"><span>The refresh token itself</span><button class="btn" data-pick="yes">Stored</button><button class="btn" data-pick="no">Never stored</button></div>
+  <div class="sort-row" data-answer="yes"><span>The PKCE code challenge</span><button class="btn" data-pick="yes">Stored</button><button class="btn" data-pick="no">Never stored</button></div>
+  <div class="sort-row" data-answer="no"><span>The PKCE code verifier</span><button class="btn" data-pick="yes">Stored</button><button class="btn" data-pick="no">Never stored</button></div>
+  <div class="sort-row" data-answer="yes"><span>A refresh token that has been rotated out</span><button class="btn" data-pick="yes">Stored</button><button class="btn" data-pick="no">Never stored</button></div>
+  <div class="sort-row" data-answer="yes"><span>The id of the user who clicked Allow</span><button class="btn" data-pick="yes">Stored</button><button class="btn" data-pick="no">Never stored</button></div>
+  <button class="btn primary check">Check</button>
+  <div class="feedback" data-right="Exactly. Secrets only as hashes; used rows kept so replays can be caught." data-wrong="Red rows are wrong. Rules: no raw secrets ever; used rows stay (revoked) until the whole family expires."></div>
+</div>
+
+<div class="exercise order" id="order-refresh" data-solution="a,b,c,d,e">
+  <div class="prompt">Order a normal refresh, an hour after connecting.</div>
+  <div class="order-pool">
+    <div class="item" data-id="a"><code>/mcp</code> answers <code>401 … error="invalid_token"</code>: the access token expired</div>
+    <div class="item" data-id="b">Claude posts <code>grant_type=refresh_token</code> to <code>/oauth/token</code></div>
+    <div class="item" data-id="c">engine-service finds the refresh row by hash; it is live</div>
+    <div class="item" data-id="d">The old refresh row gets <code>revoked_at</code></div>
+    <div class="item" data-id="e">New access and refresh rows are saved with the same <code>family_id</code></div>
+  </div>
+  <div class="order-picked"></div>
+  <button class="btn primary check">Check order</button> <button class="btn reset">Reset</button>
+  <div class="feedback" data-right="Right. The library revokes the old token before saving the new pair." data-wrong="Not quite. The old token is revoked before the new pair is written."></div>
+</div>
+
+<div class="exercise mcq" data-answer="family">
+  <div class="prompt">An attacker replays refresh token R1, which was rotated out yesterday. The real Claude currently holds R3. Afterwards…</div>
+  <div class="opts">
+    <button class="opt" data-key="only">Only R1's request fails; R3 keeps working</button>
+    <button class="opt" data-key="family">Both fail: the whole family is revoked, and the user has to reconnect</button>
+    <button class="opt" data-key="attacker">The attacker gets new tokens, because R1 is still in the table</button>
+    <button class="opt" data-key="user">The user's AMFG password is reset</button>
+  </div>
+  <div class="feedback" data-right="Right. We can't tell thief from victim, so the grant ends for both." data-wrong="What does revokeReplayedGrant do?"></div>
+</div>
+
+<div class="exercise mcq" data-answer="random">
+  <div class="prompt">Why is an unsalted SHA-256 fine for tokens when it would be wrong for passwords?</div>
+  <div class="opts">
+    <button class="opt" data-key="random">Tokens are 256 random bits, so there's nothing to guess or look up in a table</button>
+    <button class="opt" data-key="short">Tokens expire, so a leaked hash doesn't matter</button>
+    <button class="opt" data-key="enc">The database column is encrypted anyway</button>
+    <button class="opt" data-key="fast">Salting would break HTTPS</button>
+  </div>
+  <div class="feedback" data-right="Yes. Salts and slow hashes defend guessable inputs; random tokens aren't guessable." data-wrong="Refresh tokens live 30 days, so expiry isn't the reason. What makes a password weak?"></div>
+</div>
+
+<div class="exercise mcq" data-answer="newest">
+  <div class="prompt">The cleanup job runs hourly. When is a family deleted?</div>
+  <div class="opts">
+    <button class="opt" data-key="any">As soon as any row in it has expired</button>
+    <button class="opt" data-key="revoked">As soon as all its rows are revoked</button>
+    <button class="opt" data-key="newest">When its newest expiry is more than a day in the past</button>
+    <button class="opt" data-key="30">Exactly 30 days after the Allow click</button>
+  </div>
+  <div class="feedback" data-right="Right. Whole families only, with a day of slack, so replay detection keeps working until the end." data-wrong="Deleting used rows early would hide replays. Which rule keeps them as long as needed?"></div>
+</div>
+
+<div class="exercise recall">
+  <div class="prompt">Defend it. A reviewer asks: <i>"Why keep used and rotated-out tokens in the table? Just delete them."</i></div>
+  <textarea placeholder="Your answer…"></textarea>
+  <button class="btn reveal">Show model answer</button>
+  <div class="model">They're our replay detector. A legitimate client never reuses a code or an old refresh token, so seeing one come back means a copy was stolen, and we revoke the whole family. If we deleted the row, the replay would look like an unknown token and the thief's copy (if used first) would keep its grant. The rows hold only hashes, and the hourly cleanup removes the whole family a day after its last token expires.</div>
+</div>
+
+<div class="score"></div>
+
+<h3>Read next (primary source)</h3>
+<p><a href="https://www.rfc-editor.org/rfc/rfc9700.html#section-4.14">RFC 9700 §4.14, "Refresh Token Protection"</a>. Rotation and replay detection are described there as the recommended choice for public clients like Claude.</p>
+<p>Quick reference: <a href="../reference/handshake.html">the AMFG handshake</a> · <a href="../reference/glossary.html">glossary</a>.</p>
+
+
+<footer><nav class="lesson-nav" data-auto></nav></footer>
+</main>
+<script src="../assets/quiz.js"></script>
+<script src="../assets/terms.js"></script>
+<script src="../assets/nav.js"></script>
+</body>
+</html>

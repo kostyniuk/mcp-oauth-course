@@ -1,0 +1,38 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>OAuth for the AMFG connector — Contents</title>
+<link rel="stylesheet" href="assets/course.css">
+<style>
+  .toc-list { list-style: none; padding: 0; margin: 0; counter-reset: none; }
+  .toc-list li { display: grid; grid-template-columns: 64px 1fr; gap: 12px; padding: 14px 0; border-bottom: 1px solid var(--rule); margin: 0; }
+  .toc-list .n { font: 600 0.85rem var(--mono); color: var(--accent); padding-top: 3px; }
+  .toc-list a, .toc-list .title { font-size: 1.15rem; }
+  .toc-list .soon { color: var(--soft); }
+  .toc-list .soon .title::after { content: ' · coming soon'; font: 600 0.65rem var(--sans); letter-spacing: .12em; text-transform: uppercase; }
+  .toc-list p { margin: 2px 0 0; font: 0.9rem/1.45 var(--sans); color: var(--soft); }
+  .refs a { margin-right: 18px; font-family: var(--sans); }
+</style>
+</head>
+<body>
+<main>
+<nav class="lesson-nav" data-auto></nav>
+<div class="kicker">Course</div>
+<h1>OAuth for the AMFG connector</h1>
+<p class="subtitle">Short lessons to explain the Claude ↔ AMFG sign-in to the team and defend it in review.</p>
+<h2>Lessons</h2>
+<ol class="toc-list" id="lessons"></ol>
+<h2>Reference</h2>
+<p class="refs" id="refs"></p>
+<footer><nav class="lesson-nav" data-auto></nav></footer>
+</main>
+<script src="assets/nav.js"></script>
+<script>
+  document.getElementById('lessons').innerHTML = COURSE.lessons.map((l) => `
+    <li class="${l.ready ? '' : 'soon'}"><span class="n">${l.n}</span><div>${l.ready ? `<a href="${l.file}">${l.title}</a>` : `<span class="title">${l.title}</span>`}<p>${l.teaser}</p></div></li>`).join('');
+  document.getElementById('refs').innerHTML = COURSE.references.map((r) => `<a href="${r.file}">${r.title}</a>`).join('');
+</script>
+</body>
+</html>

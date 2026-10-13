@@ -1,0 +1,63 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Reference — Glossary</title>
+<link rel="stylesheet" href="../assets/course.css">
+<style>
+  .search { width: 100%; font: 1rem var(--sans); padding: 10px 14px; border: 1px solid var(--rule); border-radius: 8px; background: #fff; margin: 4px 0 8px; }
+  .toc { display: flex; flex-wrap: wrap; gap: 6px 14px; font: 600 0.75rem var(--sans); letter-spacing: .08em; text-transform: uppercase; margin-bottom: 8px; }
+  .toc a { text-decoration: none; }
+  .term { padding: 14px 0; border-bottom: 1px solid var(--rule); scroll-margin-top: 16px; }
+  .term:target { background: var(--accent-soft); margin: 0 -12px; padding: 14px 12px; border-radius: 6px; }
+  .term h4 { margin: 0 0 4px; font: 600 1.05rem var(--sans); }
+  .term h4 a { color: var(--ink); text-decoration: none; }
+  .term .aka { font: 0.82rem var(--sans); color: var(--soft); margin-left: 6px; font-weight: 400; }
+  .term .plain { margin: 0 0 6px; }
+  .term .amfg { font: 0.88rem/1.5 var(--sans); color: #3a3a38; margin: 0 0 4px; }
+  .term .amfg b { color: var(--accent); }
+  .term .src { font: 0.78rem var(--sans); }
+  .empty { color: var(--soft); font-style: italic; display: none; }
+  @media print { .search, .toc { display: none; } .term { break-inside: avoid; } }
+</style>
+</head>
+<body>
+<main>
+<nav class="lesson-nav" data-auto></nav>
+<div class="kicker">Reference</div>
+<h1>Glossary</h1>
+<p class="subtitle">Every term the course uses: a plain-English definition, what it is in AMFG, and the source.</p>
+<input class="search" type="search" placeholder="Filter terms… (e.g. pkce, token, 403)" aria-label="Filter terms">
+<div class="toc"></div>
+<div id="list"></div>
+<p class="empty">No term matches.</p>
+<footer><nav class="lesson-nav" data-auto></nav></footer>
+</main>
+<script src="../assets/terms.js"></script>
+<script>
+  const groups = [...new Set(TERMS.map((t) => t.group))];
+  const slug = (g) => g.toLowerCase().replace(/[^a-z]+/g, '-');
+  document.querySelector('.toc').innerHTML = groups.map((g) => `<a href="#${slug(g)}">${g}</a>`).join('');
+  document.getElementById('list').innerHTML = groups.map((g) => `
+    <section data-group><h2 id="${slug(g)}">${g}</h2>
+    ${TERMS.filter((t) => t.group === g).map((t) => `
+      <div class="term" id="${t.id}" data-text="${(t.term + ' ' + (t.aka || '') + ' ' + t.plain + ' ' + t.amfg).toLowerCase().replace(/"/g, '')}">
+        <h4><a href="#${t.id}">${t.term}</a>${t.aka ? `<span class="aka">${t.aka}</span>` : ''}</h4>
+        <p class="plain">${t.plain}</p>
+        <p class="amfg"><b>In AMFG:</b> ${t.amfg}</p>
+        <div class="src">Source: ${t.src[1] ? `<a href="${t.src[1]}" target="_blank" rel="noopener">${t.src[0]}</a>` : t.src[0]}</div>
+      </div>`).join('')}</section>`).join('');
+  const search = document.querySelector('.search');
+  search.addEventListener('input', () => {
+    const q = search.value.trim().toLowerCase();
+    let shown = 0;
+    document.querySelectorAll('.term').forEach((el) => { const hit = !q || el.dataset.text.includes(q); el.style.display = hit ? '' : 'none'; shown += hit; });
+    document.querySelectorAll('section[data-group]').forEach((s) => { s.style.display = [...s.querySelectorAll('.term')].some((t) => t.style.display !== 'none') ? '' : 'none'; });
+    document.querySelector('.empty').style.display = shown ? 'none' : 'block';
+  });
+  if (location.hash) document.querySelector(location.hash)?.scrollIntoView();
+</script>
+<script src="../assets/nav.js"></script>
+</body>
+</html>

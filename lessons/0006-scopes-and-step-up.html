@@ -1,0 +1,138 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>0006 — Scopes, read-only and step-up</title>
+<link rel="stylesheet" href="../assets/course.css">
+<style>
+  pre { font: 0.78rem/1.5 var(--mono); background: #f6f4ea; border: 1px solid var(--rule); border-radius: 6px; padding: 12px 14px; overflow-x: auto; margin: 10px 0 18px; }
+  table { width: 100%; border-collapse: collapse; font: 0.86rem/1.45 var(--sans); margin: 10px 0 20px; }
+  th, td { text-align: left; vertical-align: top; padding: 7px 8px; border-bottom: 1px solid var(--rule); }
+  th { font-size: 0.72rem; letter-spacing: .08em; text-transform: uppercase; color: var(--soft); }
+  .pill { font: 600 .72rem var(--mono); padding: 2px 6px; border-radius: 4px; background: var(--accent-soft); color: var(--accent); white-space: nowrap; }
+  .pill.w { background: #f6e7e0; color: var(--claude); }
+</style>
+</head>
+<body>
+<main>
+<nav class="lesson-nav" data-auto></nav>
+
+<div class="kicker">Lesson 0006 · OAuth for the AMFG connector</div>
+<h1>Scopes, read-only and step-up</h1>
+<p class="subtitle">What a token may do, how a tool says what it needs, and who Claude acts as inside AMFG.</p>
+
+<div class="goal"><b>After 12 minutes you can</b> say which scope each tool needs and why write tools need both, tell a 401 from a 403, walk through a step-up, and defend the app-scoped identity, including its weak spot.</div>
+
+<h2>Three scopes</h2>
+<div class="defs">
+  <div><span class="pill">mcp:read</span></div><div>Call the read tools. Consent label: "View tickets, parts and quotes".</div>
+  <div><span class="pill w">mcp:write</span></div><div>Call the tools that create or change things. Consent label: "Create and change tickets, parts and quotes, including sending quotes".</div>
+  <div><span class="pill">offline_access</span></div><div>Not a permission on data: it asks for a <dfn data-t="refresh-token">refresh token</dfn> (lesson 0005).</div>
+</div>
+<p>A <dfn data-t="scope">scope</dfn> is decided once, at consent, and written on every row of the grant. What ends up in the token:</p>
+<ol>
+  <li>Start from what Claude asked for, minus anything we don't support. If Claude asked for nothing, start from all three.</li>
+  <li>If the user ticked <dfn data-t="read-only">Read-only access</dfn>, remove <code>mcp:write</code>.</li>
+  <li>If no data scope is left (neither read nor write), refuse with <code>invalid_scope</code>. A token that can't call any tool is pointless.</li>
+</ol>
+
+<h2>Which tool needs what</h2>
+<p>Each MCP tool already declares <dfn data-t="read-only-hint">readOnlyHint</dfn> in its annotations. We derive the required scope from that, so there's no second list to keep in sync:</p>
+<table>
+  <tr><th>Tools</th><th>readOnlyHint</th><th>Required</th></tr>
+  <tr><td><code>get_ticket</code>, <code>get_part</code>, <code>get_quote</code></td><td>true</td><td><span class="pill">mcp:read</span></td></tr>
+  <tr><td><code>create_ticket</code>, <code>update_ticket</code>, <code>create_part</code>, <code>update_part</code>, <code>create_quote</code>, <code>update_quote</code></td><td>false</td><td><span class="pill">mcp:read</span> + <span class="pill w">mcp:write</span></td></tr>
+</table>
+<p><b>Why do write tools demand read as well?</b> When a read-only token hits a write tool, the server tells Claude which scopes to ask for, and Claude gets a <i>new</i> token that replaces the old one. If the challenge said only <code>mcp:write</code>, the new token could create tickets but no longer read them. Asking for both keeps the replacement a superset.</p>
+
+<h2>401 or 403?</h2>
+<p>These two answers mean different things, and Claude reacts to each differently (<dfn data-t="401-403">401 vs 403</dfn>, <a href="https://www.rfc-editor.org/rfc/rfc6750#section-3.1">RFC 6750 §3.1</a>):</p>
+<table>
+  <tr><th>Situation</th><th>Response</th><th>Claude does</th></tr>
+  <tr><td>No token</td><td><code>401</code>, <code>resource_metadata=…</code></td><td>Discovery and sign-in (lesson 0003)</td></tr>
+  <tr><td>Expired, revoked or unknown token</td><td><code>401</code>, <code>error="invalid_token"</code></td><td>Refresh, or sign in again</td></tr>
+  <tr><td>Valid read-only token on a write tool</td><td><code>403</code>, <code>error="insufficient_scope"</code></td><td><dfn data-t="step-up">Step-up</dfn>: ask the user for more</td></tr>
+</table>
+<pre>HTTP/1.1 403 Forbidden
+WWW-Authenticate: Bearer error="insufficient_scope", scope="mcp:read mcp:write",
+                  resource_metadata="https://dev.example.com/engine-service/public-api/v1/oauth/protected-resource"</pre>
+<p>The check runs <b>before</b> the tool body, so nothing is created (test: <i>"Should ask a read-only token to step up before a write tool runs"</i> checks that the downstream <code>ticketCreate</code> is never called). The MCP SDK's <code>requireScopes</code> does this, and we register it on every tool as <code>scopeChallenge</code>.</p>
+<p class="aside">The MCP spec lets the client react to <code>insufficient_scope</code> by starting a new authorization for the listed scopes. The user then sees the consent screen again, this time without having ticked Read-only.</p>
+
+<h2>Who does Claude act as?</h2>
+<p>Once a token is accepted, the request runs exactly like one carrying an <dfn data-t="incoming-secret">Incoming Secret</dfn>:</p>
+<pre>store.tokenData = { userId: -1, appId: token.appId }   // what every downstream service sees
+req.auth.extra  = { userId: token.userId }              // the real user, kept for the MCP layer</pre>
+<p>That's the <dfn data-t="app-scoped">app-scoped identity</dfn>. The tools were built and tested against the Incoming Secret identity, so management-service, the sandbox methods and the existing permission checks see nothing new (test: <i>"Should run tools with the App identity like an Incoming Secret"</i>). Acting as the individual user would change what every tool may see. That's a separate decision, and the stored <code>user_id</code> keeps the door open for it.</p>
+<div class="callout"><b>The weak spot to name yourself in a review:</b> any user who can sign in to an app can give Claude app-level reach. Today the gates are the consent screen, read-only, revocation, and only real users being able to approve. A per-user identity would be the follow-up if that isn't enough.</div>
+<p>Who can approve: <code>/approve</code> accepts only a signed-in AMFG user, never an internal service call, a URL-prefix token or an app-scoped <code>-1</code> caller (tests: <i>"Should require a signed-in AMFG user to approve"</i>, <i>"…platform token that names no user"</i>).</p>
+<p>Where tokens work: only on <code>/mcp</code>. The REST routes under <code>/public-api/v1</code> still require an Incoming Secret (test: <i>"Should not accept an access token on the REST routes"</i>). That keeps the new credential's reach as small as the feature needs.</p>
+
+<h2>Practice</h2>
+
+<div class="exercise sort" id="sort-scope">
+  <div class="prompt">A user ticked <b>Read-only</b>. Does the call run, or step up?</div>
+  <div class="sort-row" data-answer="run"><span><code>get_ticket</code></span><button class="btn" data-pick="run">Runs</button><button class="btn" data-pick="403">403 step-up</button></div>
+  <div class="sort-row" data-answer="403"><span><code>create_quote</code></span><button class="btn" data-pick="run">Runs</button><button class="btn" data-pick="403">403 step-up</button></div>
+  <div class="sort-row" data-answer="run"><span><code>get_part</code></span><button class="btn" data-pick="run">Runs</button><button class="btn" data-pick="403">403 step-up</button></div>
+  <div class="sort-row" data-answer="403"><span><code>update_part</code></span><button class="btn" data-pick="run">Runs</button><button class="btn" data-pick="403">403 step-up</button></div>
+  <div class="sort-row" data-answer="run"><span><code>tools/list</code> (not a tool call)</span><button class="btn" data-pick="run">Runs</button><button class="btn" data-pick="403">403 step-up</button></div>
+  <button class="btn primary check">Check</button>
+  <div class="feedback" data-right="Exactly. The scope check sits on tool calls; listing tools needs only a valid token." data-wrong="Red rows are wrong. readOnlyHint decides: get_* are read-only, everything else writes."></div>
+</div>
+
+<div class="exercise mcq" data-answer="403">
+  <div class="prompt">A read-only token calls <code>create_ticket</code>. What comes back?</div>
+  <div class="opts">
+    <button class="opt" data-key="401"><code>401</code> with <code>error="invalid_token"</code></button>
+    <button class="opt" data-key="403"><code>403</code> with <code>error="insufficient_scope"</code> and <code>scope="mcp:read mcp:write"</code>; the ticket isn't created</button>
+    <button class="opt" data-key="200"><code>200</code> with <code>isError: true</code> after the ticket is created</button>
+    <button class="opt" data-key="silent">The ticket is created as a draft</button>
+  </div>
+  <div class="feedback" data-right="Right. Valid token, not enough permission: 403, before the tool runs." data-wrong="The token is valid, so it's not a 401. Does the tool body run?"></div>
+</div>
+
+<div class="exercise mcq" data-answer="superset">
+  <div class="prompt">Why does a write tool require <code>mcp:read</code> too?</div>
+  <div class="opts">
+    <button class="opt" data-key="spec">The MCP spec says write implies read</button>
+    <button class="opt" data-key="superset">The step-up token replaces the old one, so it must keep read access</button>
+    <button class="opt" data-key="audit">Reads are logged and writes need the log</button>
+    <button class="opt" data-key="ui">claude.ai can't show write-only tools</button>
+  </div>
+  <div class="feedback" data-right="Yes. Asking for both in the challenge means the new token never loses what the old one had." data-wrong="Think about what token Claude holds after the step-up."></div>
+</div>
+
+<div class="exercise mcq" data-answer="app">
+  <div class="prompt">Alice clicked Allow. Claude then calls <code>get_ticket</code>. What identity does management-service see?</div>
+  <div class="opts">
+    <button class="opt" data-key="alice">Alice's user id, with her personal permissions</button>
+    <button class="opt" data-key="app">User <code>-1</code> plus the app id, exactly like an Incoming Secret</button>
+    <button class="opt" data-key="claude">A special "Claude" service user</button>
+    <button class="opt" data-key="none">No identity; the tool runs unauthenticated</button>
+  </div>
+  <div class="feedback" data-right="Right. Alice's id stays on the token row and in req.auth for later, but downstream sees the app." data-wrong="Look at store.tokenData above."></div>
+</div>
+
+<div class="exercise recall">
+  <div class="prompt">Defend it. A reviewer asks: <i>"So Claude runs as the whole app, not as the user who connected it? Isn't that too broad?"</i></div>
+  <textarea placeholder="Your answer…"></textarea>
+  <button class="btn reveal">Show model answer</button>
+  <div class="model">Yes, deliberately for now. It's exactly how Incoming Secrets already run, so the nine tools behave as they were built and tested, and no downstream permission logic changes. The reach is bounded: a real signed-in user must approve, they can choose read-only, write tools need <code>mcp:write</code>, tokens work only on <code>/mcp</code>, and a grant can be revoked at once. We store the real user on every token, so moving to per-user identity later is a contained change.</div>
+</div>
+
+<div class="score"></div>
+
+<h3>Read next (primary source)</h3>
+<p><a href="https://modelcontextprotocol.io/specification/2026-07-28/basic/authorization#step-up-authorization-flow">MCP: step-up authorization flow</a>, and <a href="https://www.rfc-editor.org/rfc/rfc6750#section-3.1">RFC 6750 §3.1</a> for the three bearer error codes.</p>
+<p>Quick reference: <a href="../reference/handshake.html">the AMFG handshake</a> · <a href="../reference/glossary.html">glossary</a>.</p>
+
+
+<footer><nav class="lesson-nav" data-auto></nav></footer>
+</main>
+<script src="../assets/quiz.js"></script>
+<script src="../assets/terms.js"></script>
+<script src="../assets/nav.js"></script>
+</body>
+</html>

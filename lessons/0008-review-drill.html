@@ -1,0 +1,220 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>0008 — Review drill: "why not just…?"</title>
+<link rel="stylesheet" href="../assets/course.css">
+<style>
+  .exercise .tag { float: right; font: 600 .66rem var(--sans); letter-spacing: .1em; text-transform: uppercase; color: var(--soft); }
+  .cheat { display: grid; grid-template-columns: 1fr 1fr; gap: 10px 18px; font: .88rem/1.45 var(--sans); }
+  .cheat div { border-left: 3px solid var(--accent); padding: 4px 0 4px 10px; }
+  @media (max-width: 560px) { .cheat { grid-template-columns: 1fr; } }
+</style>
+</head>
+<body>
+<main>
+<nav class="lesson-nav" data-auto></nav>
+
+<div class="kicker">Lesson 0008 · OAuth for the AMFG connector</div>
+<h1>Review drill: "why not just…?"</h1>
+<p class="subtitle">Every question here is one a reviewer could really ask. Mixed order, no hints about which lesson it's from.</p>
+
+<div class="goal"><b>How to use this:</b> answer without scrolling back. Anything you miss, reread that lesson tomorrow and come back; your first-try score is saved. Finish with the 60-second pitch at the bottom, out loud if you can.</div>
+
+<div class="exercise mcq" data-answer="b"><span class="tag">0002</span>
+  <div class="prompt">"Why not just give Claude a client secret instead of PKCE?"</div>
+  <div class="opts">
+    <button class="opt" data-key="a">Secrets are deprecated in OAuth 2.1</button>
+    <button class="opt" data-key="b">Claude is a public client: a secret shipped in Claude Code or shared by claude.ai with every server isn't secret</button>
+    <button class="opt" data-key="c">The library doesn't support client secrets</button>
+    <button class="opt" data-key="d">A secret would show on the consent screen</button>
+  </div>
+  <div class="feedback" data-right="Right. PKCE gives a fresh, per-flow secret that never leaves Claude except on the back channel." data-wrong="Who could read a secret embedded in Claude Code?"></div>
+</div>
+
+<div class="exercise mcq" data-answer="c"><span class="tag">0005</span>
+  <div class="prompt">"Why not just make access tokens last 30 days and skip refresh tokens?"</div>
+  <div class="opts">
+    <button class="opt" data-key="a">The MCP spec caps access tokens at one hour</button>
+    <button class="opt" data-key="b">Long tokens don't fit in the Authorization header</button>
+    <button class="opt" data-key="c">The access token goes on every call; keeping it short limits a leak, and rotation of the refresh token detects theft</button>
+    <button class="opt" data-key="d">Claude can't store tokens longer than a day</button>
+  </div>
+  <div class="feedback" data-right="Yes. The often-sent credential is short; the long one is sent rarely and rotates." data-wrong="Which token is exposed more often, and which one detects replay?"></div>
+</div>
+
+<div class="exercise mcq" data-answer="a"><span class="tag">0004</span>
+  <div class="prompt">"Why not just accept any CIMD client? That's the point of CIMD."</div>
+  <div class="opts">
+    <button class="opt" data-key="a">Anyone can host a document named "Claude"; and every unknown id would make our server fetch an attacker-chosen URL</button>
+    <button class="opt" data-key="b">CIMD documents are not signed, so they can't be parsed</button>
+    <button class="opt" data-key="c">Other clients don't support PKCE</button>
+    <button class="opt" data-key="d">The consent page only has a logo for Claude</button>
+  </div>
+  <div class="feedback" data-right="Right: phishing via client name, and SSRF. Extra clients are one env var away." data-wrong="What does CIMD prove, and what doesn't it?"></div>
+</div>
+
+<div class="exercise mcq" data-answer="d"><span class="tag">0001</span>
+  <div class="prompt">"Why not just put the token in the redirect, like the old implicit flow?"</div>
+  <div class="opts">
+    <button class="opt" data-key="a">Redirects can't carry more than 64 characters</button>
+    <button class="opt" data-key="b">Claude can't parse URL fragments</button>
+    <button class="opt" data-key="c">The Management Console would have to sign it</button>
+    <button class="opt" data-key="d">The front channel leaks; only a short, single-use, PKCE-bound code may travel there, and OAuth 2.1 removed implicit</button>
+  </div>
+  <div class="feedback" data-right="Yes. Tokens never touch the browser." data-wrong="Where can a URL end up?"></div>
+</div>
+
+<div class="exercise mcq" data-answer="b"><span class="tag">0005</span>
+  <div class="prompt">"Why not just use JWTs? No database lookup per call."</div>
+  <div class="opts">
+    <button class="opt" data-key="a">JWTs are too large for MCP</button>
+    <button class="opt" data-key="b">One service issues and checks the tokens; one indexed read buys instant revocation and replay response</button>
+    <button class="opt" data-key="c">JWTs need a client secret</button>
+    <button class="opt" data-key="d">The library can't produce JWTs</button>
+  </div>
+  <div class="feedback" data-right="Right. A JWT stays valid until expiry unless you add a blocklist, which is a lookup again." data-wrong="What can an opaque token do that a self-contained one can't?"></div>
+</div>
+
+<div class="exercise mcq" data-answer="c"><span class="tag">0003</span>
+  <div class="prompt">"Why not just skip the <code>resource</code> check? We only have one API."</div>
+  <div class="opts">
+    <button class="opt" data-key="a">The library crashes without it</button>
+    <button class="opt" data-key="b">claude.ai refuses servers that ignore it</button>
+    <button class="opt" data-key="c">It's the audience binding the MCP spec requires (no token passthrough), and it's essential the day a second API trusts this server</button>
+    <button class="opt" data-key="d">It selects the AMFG app</button>
+  </div>
+  <div class="feedback" data-right="Yes. Cheap now, essential later, and required by the spec." data-wrong="What does the resource bind a token to?"></div>
+</div>
+
+<div class="exercise mcq" data-answer="a"><span class="tag">0005</span>
+  <div class="prompt">"Why not just revoke the single replayed refresh token instead of the whole family?"</div>
+  <div class="opts">
+    <button class="opt" data-key="a">It's already revoked; the problem is the live copy, and we can't tell if the thief or Claude holds it</button>
+    <button class="opt" data-key="b">The database can't update a single row</button>
+    <button class="opt" data-key="c">The cleanup job needs whole families</button>
+    <button class="opt" data-key="d">RFC 7009 forbids partial revocation</button>
+  </div>
+  <div class="feedback" data-right="Right. Revoking the family is the only move that surely cuts off the thief." data-wrong="Who holds the newest token after a theft?"></div>
+</div>
+
+<div class="exercise mcq" data-answer="d"><span class="tag">0007</span>
+  <div class="prompt">"Why not just keep the MCP URL at <code>/engine-service/public-api/v1/mcp</code>?"</div>
+  <div class="opts">
+    <button class="opt" data-key="a">The long URL is blocked by Cloudflare</button>
+    <button class="opt" data-key="b">Claude only accepts URLs ending in /mcp</button>
+    <button class="opt" data-key="c">engine-service can't serve that path</button>
+    <button class="opt" data-key="d">The metadata lives at well-known paths derived from the issuer, the bare host, so the root paths are needed anyway; and users get a clean URL</button>
+  </div>
+  <div class="feedback" data-right="Yes. The long URL still works, but discovery needs the root." data-wrong="Where does RFC 8414 put the metadata relative to the issuer?"></div>
+</div>
+
+<div class="exercise mcq" data-answer="b"><span class="tag">0006</span>
+  <div class="prompt">"Why not just one scope? Read-only seems like overkill."</div>
+  <div class="opts">
+    <button class="opt" data-key="a">claude.ai requires at least two scopes</button>
+    <button class="opt" data-key="b">create_quote can send quotes to customers; users should be able to let Claude look without letting it act</button>
+    <button class="opt" data-key="c">Scopes are needed for refresh tokens</button>
+    <button class="opt" data-key="d">The library rejects single-scope tokens</button>
+  </div>
+  <div class="feedback" data-right="Right. The read-only checkbox gives the cautious user a real choice, and step-up handles the upgrade." data-wrong="What is the worst a write tool can do?"></div>
+</div>
+
+<div class="exercise mcq" data-answer="c"><span class="tag">0004</span>
+  <div class="prompt">"Why not just redirect back with an error when the redirect_uri is wrong? Claude would show a nicer message."</div>
+  <div class="opts">
+    <button class="opt" data-key="a">Claude doesn't read error parameters</button>
+    <button class="opt" data-key="b">The state would be lost</button>
+    <button class="opt" data-key="c">Redirecting to an unverified URI makes us an open redirector</button>
+    <button class="opt" data-key="d">The iss parameter can't be added to unknown URIs</button>
+  </div>
+  <div class="feedback" data-right="Yes. Unverified client or redirect: 400 page. Everything else: redirect with error." data-wrong="Who vouched for that URI?"></div>
+</div>
+
+<div class="exercise mcq" data-answer="a"><span class="tag">0002</span>
+  <div class="prompt">"Why not just allow <code>plain</code> PKCE too, for older clients?"</div>
+  <div class="opts">
+    <button class="opt" data-key="a">With plain, the challenge equals the verifier, so whoever saw the /authorize URL can redeem the code</button>
+    <button class="opt" data-key="b">plain is slower to compute</button>
+    <button class="opt" data-key="c">The database column only fits hashes</button>
+    <button class="opt" data-key="d">plain requires a client secret</button>
+  </div>
+  <div class="feedback" data-right="Right. And the MCP spec requires S256 anyway." data-wrong="What does the challenge look like with plain?"></div>
+</div>
+
+<div class="exercise mcq" data-answer="d"><span class="tag">0006</span>
+  <div class="prompt">"Why not just accept the OAuth token on the REST API as well?"</div>
+  <div class="opts">
+    <button class="opt" data-key="a">The REST API has no auth middleware</button>
+    <button class="opt" data-key="b">REST routes can't read the Authorization header</button>
+    <button class="opt" data-key="c">REST calls would need a new scope first, and none is designed yet</button>
+    <button class="opt" data-key="d">Least privilege: the user consented to Claude's tools, so the token only works on /mcp</button>
+  </div>
+  <div class="feedback" data-right="Right. The user agreed to the MCP tools; the token shouldn't open more than that." data-wrong="Think about what the user actually consented to."></div>
+</div>
+
+<div class="exercise mcq" data-answer="b"><span class="tag">0003 · 0007</span>
+  <div class="prompt">"Why not just enable OAuth everywhere as soon as the code merges?"</div>
+  <div class="opts">
+    <button class="opt" data-key="a">The migration must run separately first</button>
+    <button class="opt" data-key="b">Each environment needs its routing (template 4.0.8+) and an issuer URL; MCP_OAUTH_ISSUER keeps the feature fully off until both are ready</button>
+    <button class="opt" data-key="c">Claude only supports one AMFG environment</button>
+    <button class="opt" data-key="d">It would break Incoming Secrets</button>
+  </div>
+  <div class="feedback" data-right="Yes. The code can ship dark; the flag turns it on per environment." data-wrong="What does each environment need before discovery can work?"></div>
+</div>
+
+<div class="exercise mcq" data-answer="c"><span class="tag">0001 · 0004</span>
+  <div class="prompt">"Why not just build the consent screen inside engine-service?"</div>
+  <div class="opts">
+    <button class="opt" data-key="a">engine-service can't render HTML</button>
+    <button class="opt" data-key="b">The spec requires a separate consent service</button>
+    <button class="opt" data-key="c">Users already sign in through the Management Console (with its captcha and existing sessions); reusing it means no second login page to secure, and the signed request stops the console from changing anything</button>
+    <button class="opt" data-key="d">Claude only opens console.amfg.ai URLs</button>
+  </div>
+  <div class="feedback" data-right="Right. One login surface; engine-service still makes every decision." data-wrong="Where does an AMFG user already sign in?"></div>
+</div>
+
+<h2>Spot the bug</h2>
+
+<div class="exercise sort" id="sort-bugs">
+  <div class="prompt">A colleague proposes these changes. Safe, or does it break a guarantee?</div>
+  <div class="sort-row" data-answer="bad"><span>"Delete code rows as soon as they're redeemed, to keep the table small"</span><button class="btn" data-pick="ok">Safe</button><button class="btn" data-pick="bad">Breaks it</button></div>
+  <div class="sort-row" data-answer="ok"><span>"Lower the access token lifetime to 15 minutes via env var"</span><button class="btn" data-pick="ok">Safe</button><button class="btn" data-pick="bad">Breaks it</button></div>
+  <div class="sort-row" data-answer="bad"><span>"Store the access token in plain text so support can look it up"</span><button class="btn" data-pick="ok">Safe</button><button class="btn" data-pick="bad">Breaks it</button></div>
+  <div class="sort-row" data-answer="bad"><span>"Change the ingress rule for /.well-known to Prefix to cover future files"</span><button class="btn" data-pick="ok">Safe</button><button class="btn" data-pick="bad">Breaks it</button></div>
+  <div class="sort-row" data-answer="ok"><span>"Add an internal agent's CIMD URL to MCP_OAUTH_EXTRA_CLIENT_IDS"</span><button class="btn" data-pick="ok">Safe</button><button class="btn" data-pick="bad">Breaks it</button></div>
+  <div class="sort-row" data-answer="bad"><span>"Accept redirect URIs that start with the registered one"</span><button class="btn" data-pick="ok">Safe</button><button class="btn" data-pick="bad">Breaks it</button></div>
+  <button class="btn primary check">Check</button>
+  <div class="feedback" data-right="Exactly. Replay detection, hashing, Exact routing and exact redirect matching are the load-bearing walls." data-wrong="Red rows are wrong. Ask of each: does it weaken replay detection, secrecy at rest, routing scope or redirect matching?"></div>
+</div>
+
+<h2>The 60-second pitch</h2>
+<div class="exercise recall">
+  <div class="prompt">Explain the whole feature to a teammate who has never seen it: what, why, and the four or five design decisions that matter. Write it, then compare.</div>
+  <textarea placeholder="Your pitch…" style="min-height:140px"></textarea>
+  <button class="btn reveal">Show model answer</button>
+  <div class="model">Users can now connect Claude to AMFG by pasting <code>https://console.amfg.ai/mcp</code>; no admin has to hand out an Incoming Secret. Claude discovers our authorization server from a 401 and two well-known documents. It sends the user through the normal Management Console login to a consent screen, then swaps a 5-minute code for a 1-hour access token and a 30-day refresh token.<br><br>Five decisions carry it. <b>PKCE S256</b>, because Claude has no client secret. <b>CIMD with an allowlist</b>, so there's no registration endpoint and no fake "Claude". Tokens are <b>opaque, hashed, bound to /mcp</b>, with <b>rotation and family-wide revocation</b> on replay. Scopes are <b>read and write</b>, with step-up, and tools run with the same app identity as Incoming Secrets. And it's <b>routed with three Exact ingress rules plus an in-app rewrite</b>, gated by <code>MCP_OAUTH_ISSUER</code>, so it ships dark until prod has deployment template 4.0.8+.</div>
+</div>
+
+<div class="score"></div>
+
+<h2>Cheat sheet</h2>
+<div class="cheat">
+  <div><b>Lifetimes</b><br>code 5 min · access 1 h · refresh 30 d, rotating</div>
+  <div><b>Scopes</b><br>mcp:read · mcp:write · offline_access</div>
+  <div><b>Errors</b><br>401 no/bad token · 403 insufficient_scope · 400 invalid_target</div>
+  <div><b>Kill switch</b><br>MCP_OAUTH_ISSUER unset → /oauth 404, no challenge</div>
+  <div><b>Clients</b><br>claude.ai + Claude Code CIMD ids, pinned fallback</div>
+  <div><b>Prod blockers</b><br>template bump · release port · issuer env · directory listing</div>
+</div>
+
+
+<footer><nav class="lesson-nav" data-auto></nav></footer>
+</main>
+<script src="../assets/quiz.js"></script>
+<script src="../assets/terms.js"></script>
+<script src="../assets/nav.js"></script>
+</body>
+</html>

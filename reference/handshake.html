@@ -1,0 +1,60 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Reference — the AMFG handshake</title>
+<link rel="stylesheet" href="../assets/course.css">
+<style>
+  .steps { display: grid; grid-template-columns: 34px 120px 1fr; border-top: 1px solid var(--rule); font-family: var(--sans); font-size: 0.88rem; }
+  .steps > div { padding: 8px 6px; border-bottom: 1px solid var(--rule); }
+  .steps .n { font-weight: 700; color: var(--accent); }
+  .ch { font: 600 0.68rem/1 var(--sans); letter-spacing: .08em; text-transform: uppercase; padding: 2px 6px; border-radius: 4px; }
+  .ch.f { background: #f6e7e0; color: var(--claude); }
+  .ch.b { background: var(--accent-soft); color: var(--accent); }
+</style>
+</head>
+<body>
+<main>
+<nav class="lesson-nav" data-auto></nav>
+<div class="kicker">Reference</div>
+<h1>The AMFG handshake</h1>
+<p class="subtitle">Dotted words open a definition. One page to keep next to you in a review or a walkthrough.</p>
+
+<h3>Roles</h3>
+<div class="defs">
+  <div><span class="actor user"><dfn data-t="resource-owner">Resource owner</dfn></span></div><div>The AMFG user who clicks Allow</div>
+  <div><span class="actor claude"><dfn data-t="client">Client</dfn></span></div><div>Claude: claude.ai or Claude Code</div>
+  <div><span class="actor engine"><dfn data-t="authorization-server">Authorization server</dfn></span></div><div>engine-service <code>/public-api/v1/oauth/*</code></div>
+  <div><span class="actor engine"><dfn data-t="resource-server">Resource server</dfn></span></div><div>engine-service <code>/mcp</code></div>
+  <div><span class="actor mc">Mgmt Console</span></div><div>Not a role: the authorization server's login and consent screen</div>
+</div>
+
+<h3>Steps</h3>
+<div class="steps">
+  <div class="n">1</div><div><span class="ch b">back</span></div><div><code>POST /mcp</code> with no token → <code>401</code> + <code>WWW-Authenticate: resource_metadata=…</code></div>
+  <div class="n">2</div><div><span class="ch b">back</span></div><div><dfn data-t="as-metadata">Discovery</dfn>: <code>/.well-known/oauth-protected-resource/mcp</code> → <code>/.well-known/oauth-authorization-server</code></div>
+  <div class="n">3</div><div><span class="ch f">front</span></div><div>Browser → <code>/oauth/authorize</code> (<dfn data-t="client-id">client id</dfn>, <dfn data-t="redirect-uri">redirect</dfn>, <dfn data-t="pkce">PKCE</dfn> challenge, <dfn data-t="resource-indicator">resource</dfn>, <dfn data-t="state">state</dfn>) → 302 → MC <code>/login?oauth=…</code></div>
+  <div class="n">4</div><div><span class="ch f">front</span></div><div>MC login, then consent → <code>POST /oauth/approve</code> → redirect to Claude with <code>?code&amp;state&amp;iss</code></div>
+  <div class="n">5</div><div><span class="ch b">back</span></div><div><code>POST /oauth/token</code> with the code + PKCE verifier → access token + refresh token</div>
+  <div class="n">6</div><div><span class="ch b">back</span></div><div><code>POST /mcp</code> with <code>Authorization: Bearer &lt;access&gt;</code></div>
+  <div class="n">7</div><div><span class="ch b">back</span></div><div><code>POST /oauth/token</code> <code>grant_type=refresh_token</code> → new access + new refresh (<dfn data-t="rotation">rotation</dfn>: the old refresh token is revoked)</div>
+</div>
+
+<h3>Lifetimes</h3>
+<div class="defs">
+  <div><dfn data-t="authorization-code">Authorization code</dfn></div><div>5 minutes, single use</div>
+  <div><dfn data-t="access-token">Access token</dfn></div><div>1 hour</div>
+  <div><dfn data-t="refresh-token">Refresh token</dfn></div><div>30 days, rotated on every use</div>
+</div>
+
+<h3>One-liners</h3>
+<p><b>Why a code first?</b> The front channel leaks; only a short-lived, single-use code travels there, and tokens move on the back channel.</p>
+<p><b>Why both roles in engine-service?</b> It already owns <code>/public-api/v1</code> and app resolution; the spec allows the authorization server and resource server to be the same server (<a href="https://www.rfc-editor.org/rfc/rfc6749#section-1.1">RFC 6749 §1.1</a>).</p>
+
+<footer><nav class="lesson-nav" data-auto></nav></footer>
+</main>
+<script src="../assets/terms.js"></script>
+<script src="../assets/nav.js"></script>
+</body>
+</html>

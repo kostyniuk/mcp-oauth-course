@@ -1,0 +1,103 @@
+/* Shared course stylesheet: Tufte-like reading layout, printable. */
+:root {
+  --paper: #fffff8;
+  --ink: #1b1b1b;
+  --soft: #5d5d5a;
+  --rule: #d9d6c8;
+  --accent: #1f6f78;
+  --accent-soft: #e3f0f1;
+  --good: #2f7d32;
+  --good-soft: #e6f2e6;
+  --bad: #a3322b;
+  --bad-soft: #f7e5e3;
+  --claude: #b4593a;
+  --engine: #1f6f78;
+  --mc: #5b6f2e;
+  --serif: Charter, "Bitstream Charter", "Iowan Old Style", Georgia, serif;
+  --sans: "Inter", system-ui, -apple-system, "Segoe UI", sans-serif;
+  --mono: "JetBrains Mono", ui-monospace, SFMono-Regular, Menlo, monospace;
+}
+* { box-sizing: border-box; }
+html { background: var(--paper); }
+body { margin: 0; color: var(--ink); font: 19px/1.6 var(--serif); }
+main { max-width: 760px; margin: 0 auto; padding: 32px 24px 80px; }
+h1 { font-weight: 400; font-size: 2.3rem; line-height: 1.15; margin: 8px 0 6px; letter-spacing: -0.01em; }
+h2 { font-weight: 400; font-style: italic; font-size: 1.5rem; margin: 48px 0 10px; }
+h3 { font: 600 0.8rem/1 var(--sans); letter-spacing: 0.12em; text-transform: uppercase; color: var(--soft); margin: 28px 0 8px; }
+p, li { margin: 0 0 14px; }
+a { color: var(--accent); }
+code, .mono { font-family: var(--mono); font-size: 0.82em; }
+code { background: #f1efe4; padding: 1px 5px; border-radius: 4px; }
+.kicker { font: 600 0.75rem/1 var(--sans); letter-spacing: 0.16em; text-transform: uppercase; color: var(--accent); }
+.subtitle { color: var(--soft); font-style: italic; font-size: 1.15rem; margin-bottom: 28px; }
+
+/* prev / next */
+.lesson-nav { display: flex; justify-content: space-between; gap: 12px; font: 600 0.72rem/1.4 var(--sans); letter-spacing: 0.1em; text-transform: uppercase; padding: 10px 0; border-bottom: 1px solid var(--rule); margin-bottom: 22px; }
+footer .lesson-nav { border-bottom: 0; border-top: 1px solid var(--rule); margin: 0 0 16px; }
+.lesson-nav a { text-decoration: none; }
+.lesson-nav .spacer { flex: 1; }
+
+/* side notes: float right on wide screens, inline on narrow */
+.aside { font-size: 0.82rem; line-height: 1.45; color: var(--soft); border-left: 2px solid var(--rule); padding-left: 12px; margin: 6px 0 16px; }
+@media (min-width: 1180px) {
+  .aside { float: right; clear: right; width: 260px; margin-right: -300px; border-left: 0; padding-left: 0; }
+}
+
+.goal { border: 1px solid var(--rule); border-left: 4px solid var(--accent); background: #fff; padding: 14px 18px; margin: 18px 0 26px; font-family: var(--sans); font-size: 0.92rem; }
+.goal b { font-weight: 600; }
+.callout { background: var(--accent-soft); padding: 14px 18px; border-radius: 6px; font-size: 0.95rem; margin: 18px 0; }
+
+/* actor tags */
+.actor { font: 600 0.72rem/1 var(--sans); letter-spacing: 0.06em; text-transform: uppercase; padding: 3px 7px; border-radius: 4px; white-space: nowrap; }
+.actor.claude { color: var(--claude); background: #f6e7e0; }
+.actor.engine { color: var(--engine); background: var(--accent-soft); }
+.actor.mc { color: var(--mc); background: #ecf0e0; }
+.actor.user { color: #444; background: #ececec; }
+
+/* definition table (CSS grid) */
+.defs { display: grid; grid-template-columns: 170px 1fr; border-top: 1px solid var(--rule); font-size: 0.95rem; }
+.defs > div { padding: 10px 8px; border-bottom: 1px solid var(--rule); }
+.defs > div:nth-child(odd) { font-family: var(--sans); font-weight: 600; font-size: 0.85rem; }
+@media (max-width: 560px) { .defs { grid-template-columns: 1fr; } .defs > div:nth-child(odd) { border-bottom: 0; padding-bottom: 0; } }
+
+figure { margin: 22px 0; }
+figure svg, figure img { width: 100%; height: auto; display: block; }
+figcaption { font: 0.8rem/1.4 var(--sans); color: var(--soft); margin-top: 6px; }
+
+/* exercises */
+.exercise { border: 1px solid var(--rule); background: #fff; border-radius: 8px; padding: 18px 20px; margin: 22px 0; font-family: var(--sans); font-size: 0.95rem; }
+.exercise .prompt { font-weight: 600; margin-bottom: 12px; }
+.opts { display: grid; gap: 8px; }
+.opt, .btn { font: inherit; text-align: left; padding: 10px 14px; border: 1px solid var(--rule); border-radius: 6px; background: var(--paper); cursor: pointer; color: var(--ink); }
+.opt:hover, .btn:hover { border-color: var(--accent); }
+.opt.right { background: var(--good-soft); border-color: var(--good); }
+.opt.wrong { background: var(--bad-soft); border-color: var(--bad); }
+.btn.primary { background: var(--accent); color: #fff; border-color: var(--accent); }
+.feedback { margin-top: 10px; font-size: 0.9rem; display: none; }
+.feedback.show { display: block; }
+.feedback.good { color: var(--good); }
+.feedback.bad { color: var(--bad); }
+
+.order-pool, .order-picked { display: grid; gap: 6px; margin: 8px 0; min-height: 20px; }
+.order-picked { counter-reset: step; }
+.order-picked .item::before { counter-increment: step; content: counter(step) ". "; font-weight: 700; color: var(--accent); }
+.item { padding: 8px 12px; border: 1px dashed var(--rule); border-radius: 6px; cursor: pointer; background: var(--paper); }
+.item.right { border-style: solid; border-color: var(--good); background: var(--good-soft); }
+.item.wrong { border-style: solid; border-color: var(--bad); background: var(--bad-soft); }
+
+.sort-row { display: grid; grid-template-columns: 1fr auto auto; gap: 8px; align-items: center; padding: 6px 0; border-bottom: 1px solid #eee; }
+.sort-row:last-child { border-bottom: 0; }
+.sort-row .btn { padding: 6px 10px; font-size: 0.85rem; }
+
+textarea { width: 100%; min-height: 80px; font: 0.95rem/1.5 var(--sans); padding: 10px; border: 1px solid var(--rule); border-radius: 6px; background: var(--paper); }
+.model { display: none; margin-top: 10px; padding: 12px 14px; background: var(--accent-soft); border-radius: 6px; }
+.model.show { display: block; }
+
+.score { font: 600 0.85rem var(--sans); color: var(--soft); text-align: right; margin-top: 8px; }
+.ask { border-top: 1px solid var(--rule); margin-top: 48px; padding-top: 18px; font-style: italic; color: var(--soft); }
+
+@media print {
+  .exercise, .lesson-nav { break-inside: avoid; }
+  .feedback, .model { display: block !important; }
+  html { background: #fff; }
+}

@@ -1,0 +1,204 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>0002 — PKCE: the lock on the code</title>
+<link rel="stylesheet" href="../assets/course.css">
+<style>
+  .lab { display: grid; gap: 8px; }
+  .lab label { font: 600 0.75rem var(--sans); letter-spacing: .08em; text-transform: uppercase; color: var(--soft); }
+  .lab output, .lab input { font: 0.82rem var(--mono); padding: 8px 10px; border: 1px solid var(--rule); border-radius: 6px; background: var(--paper); word-break: break-all; }
+  .lab output { background: var(--accent-soft); min-height: 2.2em; }
+  .where { display: grid; grid-template-columns: 30px 1fr; border-top: 1px solid var(--rule); font: 0.9rem/1.5 var(--sans); }
+  .where > div { padding: 9px 6px; border-bottom: 1px solid var(--rule); }
+  .where .n { font-weight: 700; color: var(--accent); }
+</style>
+</head>
+<body>
+<main>
+<nav class="lesson-nav" data-auto></nav>
+
+<div class="kicker">Lesson 0002 · OAuth for the AMFG connector</div>
+<h1>PKCE: the lock on the code</h1>
+<p class="subtitle">A stolen code is worthless if redeeming it needs a secret that never went through the browser.</p>
+
+<div class="goal"><b>After 12 minutes you can</b> describe the attack <dfn data-t="pkce">PKCE</dfn> stops, explain why the challenge can be public while the verifier can't, and answer <i>"the code already lives 5 minutes and works once, so why add PKCE?"</i></div>
+
+<h2>The gap lesson 1 left open</h2>
+<p>A classic web app proves who it is at <code>/token</code> with a <i>client secret</i>, a password only its server knows. Then a stolen code is useless without that secret too.</p>
+<p>Claude can't do this. Claude Code runs on your laptop, where anyone can read its files. claude.ai uses a published <dfn data-t="client-id">client id</dfn> and no secret. Both are <dfn data-t="public-client">public clients</dfn>: their metadata says <code>token_endpoint_auth_method: "none"</code>. Without something extra, <b>whoever holds the code can redeem it</b>.</p>
+
+<h2>The attack: code interception</h2>
+<p>The code travels on the <dfn data-t="front-channel">front channel</dfn>, so it can end up in browser history, a proxy log, a browser extension, or a hostile process listening on the <dfn data-t="loopback">loopback</dfn> port Claude Code uses. That is <dfn data-t="code-interception">code interception</dfn> (<a href="https://www.rfc-editor.org/rfc/rfc7636#section-1">RFC 7636 §1</a>):</p>
+<ol>
+  <li>The user clicks Allow. engine-service redirects to <code>http://localhost:53682/callback?code=AbC…</code>.</li>
+  <li>An attacker reads that URL and posts the code to <code>/oauth/token</code> before Claude does.</li>
+  <li>Without PKCE, the attacker gets an access token for the user's AMFG app.</li>
+</ol>
+<p class="aside">"Single-use, 5 minutes" doesn't help here: the attacker only needs to use it <i>first</i>, which takes milliseconds.</p>
+
+<h2>The fix: commit to a secret, reveal it later</h2>
+<p>Before opening the browser, Claude makes a random <dfn data-t="code-verifier">code verifier</dfn> (43–128 characters) and keeps it in memory. It sends only the <b>challenge</b>, the verifier's SHA-256 <dfn data-t="hash">hash</dfn>:</p>
+<p><code>code_challenge = BASE64URL( SHA256( code_verifier ) )</code></p>
+<figure>
+<svg viewBox="0 0 720 260" role="img" aria-label="Challenge goes through the browser, verifier only to the token endpoint">
+  <defs><marker id="a2" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto"><path d="M0,0 L10,5 L0,10z" fill="#5d5d5a"/></marker></defs>
+  <g font-family="Inter, system-ui, sans-serif" font-size="12">
+    <rect x="10" y="10" width="700" height="110" rx="10" fill="#fdf3ee" stroke="#e7c9bb" stroke-dasharray="5 4"/>
+    <text x="170" y="30" fill="#b4593a" font-weight="700" letter-spacing="1.5">FRONT CHANNEL · an attacker may see all of this</text>
+    <rect x="10" y="140" width="700" height="110" rx="10" fill="#eef6f7" stroke="#b9d8db"/>
+    <text x="170" y="160" fill="#1f6f78" font-weight="700" letter-spacing="1.5">BACK CHANNEL · HTTPS from Claude only</text>
+    <rect x="28" y="48" width="130" height="190" rx="6" fill="#fff" stroke="#b4593a"/><text x="93" y="70" text-anchor="middle" fill="#b4593a" font-weight="700">Claude</text>
+    <text x="93" y="92" text-anchor="middle" fill="#5d5d5a" font-size="11">keeps verifier</text><text x="93" y="107" text-anchor="middle" fill="#5d5d5a" font-size="11">in memory</text>
+    <rect x="562" y="48" width="130" height="190" rx="6" fill="#fff" stroke="#1f6f78"/><text x="627" y="70" text-anchor="middle" fill="#1f6f78" font-weight="700">engine-service</text>
+    <text x="627" y="92" text-anchor="middle" fill="#5d5d5a" font-size="11">stores challenge</text><text x="627" y="107" text-anchor="middle" fill="#5d5d5a" font-size="11">with the code</text>
+    <line x1="160" y1="62" x2="558" y2="62" stroke="#b4593a" stroke-width="2" marker-end="url(#a2)"/><text x="190" y="56" fill="#b4593a" font-weight="700">① /authorize?code_challenge=E9Mel…&amp;code_challenge_method=S256</text>
+    <line x1="558" y1="98" x2="162" y2="98" stroke="#b4593a" stroke-width="2" marker-end="url(#a2)"/><text x="300" y="114" fill="#b4593a">② redirect ?code=AbC…</text>
+    <line x1="160" y1="190" x2="558" y2="190" stroke="#1f6f78" stroke-width="2" marker-end="url(#a2)"/><text x="190" y="184" fill="#1f6f78" font-weight="700">③ POST /token  code=AbC…  code_verifier=dBjf…</text>
+    <text x="190" y="214" fill="#1f6f78">④ server: SHA256(verifier) == stored challenge? → tokens : invalid_grant</text>
+  </g>
+</svg>
+<figcaption>The attacker can see the challenge and the code, but can't reverse a hash to get the verifier. Only the Claude that started the flow can finish it.</figcaption>
+</figure>
+<p>This works because a hash is one-way. Publishing the challenge commits Claude to the verifier without revealing it.</p>
+
+<div class="exercise" id="lab">
+  <div class="prompt">Try it: this is exactly what Claude computes.</div>
+  <div class="lab">
+    <label for="verifier">code_verifier (Claude keeps this)</label>
+    <input id="verifier" value="dBjftJeZ4CVP-mB92K27uhbUJU1p1r_wW1gFWFOEjXk">
+    <label>code_challenge (sent through the browser)</label>
+    <output id="challenge"></output>
+  </div>
+  <p style="margin:10px 0 0;font-size:.85rem;color:var(--soft)">The default verifier is the example from <a href="https://www.rfc-editor.org/rfc/rfc7636#appendix-B">RFC 7636 Appendix B</a>; the challenge should read <code>E9Melhoa2OwvFrEMTJguCHaoeK1t8URWbuGJSstw-cM</code>. Change one character and it changes completely.</p>
+  <button class="btn" id="newVerifier">Generate a random verifier</button>
+</div>
+
+<h2>Why only S256</h2>
+<p>RFC 7636 also defines a <code>plain</code> method, where the challenge <i>is</i> the verifier. Anyone who saw the <code>/authorize</code> URL then knows the verifier, so the protection is gone. <a href="https://www.rfc-editor.org/rfc/rfc9700.html#section-2.1.1">RFC 9700 §2.1.1</a> recommends <dfn data-t="s256">S256</dfn>, and the MCP spec requires it. Our metadata advertises <code>code_challenge_methods_supported: ["S256"]</code>, and anything else is refused.</p>
+
+<h2>Where the challenge travels in AMFG</h2>
+<div class="where">
+  <div class="n">1</div><div><code>GET /oauth/authorize</code> refuses a missing challenge or a method other than S256. It redirects back to Claude with <code>error=invalid_request</code>.</div>
+  <div class="n">2</div><div>The challenge is packed into the <dfn data-t="signed-request">signed authorization request</dfn> that goes to the Management Console. The console can show the request but can't swap the challenge, because the signature would break.</div>
+  <div class="n">3</div><div><code>POST /oauth/approve</code> creates the code. <code>saveAuthorizationCode</code> checks for S256 <i>again</i>, because the library would happily issue a code without PKCE. The challenge is stored in the code's <code>metadata</code> column.</div>
+  <div class="n">4</div><div><code>POST /oauth/token</code>: the library hashes <code>code_verifier</code> and compares it with the stored challenge. A wrong verifier gives <code>invalid_grant</code> <b>and consumes the code</b>, so a guesser gets exactly one try (test: <i>"Should consume the code on a wrong PKCE verifier"</i>).</div>
+</div>
+<p class="aside">The verifier itself is never stored. It arrives once at <code>/token</code>, is hashed and compared, and is discarded.</p>
+
+<h2>A bonus: it also stops code injection</h2>
+<p><dfn data-t="code-injection">Code injection</dfn> runs the other way: the attacker pushes <i>their</i> stolen code into the victim's callback, hoping the victim's Claude redeems it and works on the wrong account. The victim's Claude sends its own verifier, which doesn't match the challenge stored with that code, so it fails (<a href="https://www.rfc-editor.org/rfc/rfc9700.html#section-4.5">RFC 9700 §4.5</a>). <dfn data-t="state">state</dfn> covers a similar forged-response case, and we require it too.</p>
+
+<div class="callout">One line for a review: <b>the challenge is a public commitment, the verifier is the private proof, and the proof only ever travels on the back channel.</b></div>
+
+<h2>Practice</h2>
+
+<div class="exercise order" id="order-pkce" data-solution="a,b,c,d,e,f">
+  <div class="prompt">Put PKCE in order. Click a step to move it down; click again to send it back.</div>
+  <div class="order-pool">
+    <div class="item" data-id="a">Claude generates a random verifier and keeps it in memory</div>
+    <div class="item" data-id="b">Claude hashes it into the challenge</div>
+    <div class="item" data-id="c">The browser carries the challenge to <code>/oauth/authorize</code></div>
+    <div class="item" data-id="d">engine-service stores the challenge with the new code</div>
+    <div class="item" data-id="e">Claude posts the code and the verifier to <code>/oauth/token</code></div>
+    <div class="item" data-id="f">engine-service hashes the verifier and compares</div>
+  </div>
+  <div class="order-picked"></div>
+  <button class="btn primary check">Check order</button> <button class="btn reset">Reset</button>
+  <div class="feedback" data-right="Right: commit (hash) first, reveal (verifier) last, on the back channel." data-wrong="Not quite. The challenge must reach the server before the code exists; the verifier comes last."></div>
+</div>
+
+<div class="exercise sort" id="sort-pkce">
+  <div class="prompt">Can an attacker who watches the browser see it?</div>
+  <div class="sort-row" data-answer="yes"><span>The code challenge</span><button class="btn" data-pick="yes">Visible</button><button class="btn" data-pick="no">Hidden</button></div>
+  <div class="sort-row" data-answer="no"><span>The code verifier</span><button class="btn" data-pick="yes">Visible</button><button class="btn" data-pick="no">Hidden</button></div>
+  <div class="sort-row" data-answer="yes"><span>The authorization code</span><button class="btn" data-pick="yes">Visible</button><button class="btn" data-pick="no">Hidden</button></div>
+  <div class="sort-row" data-answer="yes"><span><code>code_challenge_method=S256</code></span><button class="btn" data-pick="yes">Visible</button><button class="btn" data-pick="no">Hidden</button></div>
+  <div class="sort-row" data-answer="no"><span>The access token</span><button class="btn" data-pick="yes">Visible</button><button class="btn" data-pick="no">Hidden</button></div>
+  <button class="btn primary check">Check</button>
+  <div class="feedback" data-right="Exactly. PKCE assumes the whole front channel is public; only the verifier and the tokens stay off it." data-wrong="Red rows are wrong. Anything in a redirect URL is visible; the verifier only appears at /token."></div>
+</div>
+
+<div class="exercise mcq" data-answer="first">
+  <div class="prompt">The code is single-use and lives 5 minutes. Why isn't that enough without PKCE?</div>
+  <div class="opts">
+    <button class="opt" data-key="long">Five minutes is long enough for an attacker to brute-force the code</button>
+    <button class="opt" data-key="first">An attacker who sees the code only has to redeem it before Claude does</button>
+    <button class="opt" data-key="reuse">Single-use is not enforced by the library</button>
+    <button class="opt" data-key="tls">The token endpoint runs without HTTPS</button>
+  </div>
+  <div class="feedback" data-right="Right. Single-use protects against a second use, not a faster first use." data-wrong="Think about a race: who uses the code first?"></div>
+</div>
+
+<div class="exercise mcq" data-answer="hash">
+  <div class="prompt">Why is it safe to send the challenge through the browser?</div>
+  <div class="opts">
+    <button class="opt" data-key="enc">It is encrypted with engine-service's public key</button>
+    <button class="opt" data-key="hash">It is a SHA-256 hash; the verifier can't be worked out from it</button>
+    <button class="opt" data-key="short">It expires after 5 minutes, together with the code</button>
+    <button class="opt" data-key="state">The state parameter signs it</button>
+  </div>
+  <div class="feedback" data-right="Yes. A one-way hash commits to the verifier without revealing it." data-wrong="Nothing is encrypted here. What property does SHA-256 have?"></div>
+</div>
+
+<div class="exercise mcq" data-answer="once">
+  <div class="prompt">An attacker has a stolen code and tries a guessed verifier at <code>/oauth/token</code>. What happens in AMFG?</div>
+  <div class="opts">
+    <button class="opt" data-key="retry"><code>invalid_grant</code>; they can keep trying until the code expires</button>
+    <button class="opt" data-key="once"><code>invalid_grant</code>, and the code is consumed, so no second try</button>
+    <button class="opt" data-key="lock">The user's AMFG account is locked</button>
+    <button class="opt" data-key="ok">Tokens are issued with read-only scope</button>
+  </div>
+  <div class="feedback" data-right="Right. The library revokes the code before checking the verifier, so a guess burns it." data-wrong="Check the 4th row of the table above."></div>
+</div>
+
+<div class="exercise mcq" data-answer="lib">
+  <div class="prompt">Why does <code>saveAuthorizationCode</code> check S256 when <code>/authorize</code> already did?</div>
+  <div class="opts">
+    <button class="opt" data-key="lib">The OAuth library would issue a code without PKCE; the model is the last gate before a code exists</button>
+    <button class="opt" data-key="mc">The Management Console may change the challenge method on the way</button>
+    <button class="opt" data-key="perf">To cache the result for <code>/token</code></button>
+    <button class="opt" data-key="spec">RFC 7636 requires every check to run twice</button>
+  </div>
+  <div class="feedback" data-right="Yes. Defence in depth: whatever path reaches the library, no code gets saved without an S256 challenge." data-wrong="The console can't change it, because the request is signed. Who else issues codes?"></div>
+</div>
+
+<div class="exercise recall">
+  <div class="prompt">Defend it. A reviewer asks: <i>"Claude has no client secret. What stops someone who steals the code from getting a token?"</i> Answer in two sentences, then compare.</div>
+  <textarea placeholder="Your answer…"></textarea>
+  <button class="btn reveal">Show model answer</button>
+  <div class="model">PKCE: Claude sends only a SHA-256 challenge through the browser and reveals the matching verifier only on its direct call to <code>/oauth/token</code>, where we check it, and we accept only S256. Someone with the stolen code doesn't have the verifier, a wrong guess burns the code, and the verifier is never stored or sent through the browser.</div>
+</div>
+
+<div class="score"></div>
+
+<h3>Read next (primary source)</h3>
+<p><a href="https://www.rfc-editor.org/rfc/rfc7636#section-1">RFC 7636 §1 (Introduction) and §4 (Protocol)</a>. It's short, and the figure in §1 is the attack from this lesson. Then <a href="https://oauth.net/2/pkce/">oauth.net/2/pkce</a> for why OAuth 2.1 requires PKCE for every client.</p>
+<p>Quick reference: <a href="../reference/handshake.html">the AMFG handshake</a> · <a href="../reference/glossary.html">glossary</a>.</p>
+
+
+<footer><nav class="lesson-nav" data-auto></nav></footer>
+</main>
+<script>
+  (() => {
+    const b64url = (buf) => btoa(String.fromCharCode(...new Uint8Array(buf))).replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '');
+    const input = document.getElementById('verifier');
+    const out = document.getElementById('challenge');
+    const update = async () => {
+      if (!crypto.subtle) return (out.textContent = 'Your browser blocks crypto.subtle on this page; open it over http(s) to try.');
+      out.textContent = b64url(await crypto.subtle.digest('SHA-256', new TextEncoder().encode(input.value)));
+    };
+    input.addEventListener('input', update);
+    document.getElementById('newVerifier').addEventListener('click', () => {
+      input.value = b64url(crypto.getRandomValues(new Uint8Array(32)));
+      update();
+    });
+    update();
+  })();
+</script>
+<script src="../assets/quiz.js"></script>
+<script src="../assets/terms.js"></script>
+<script src="../assets/nav.js"></script>
+</body>
+</html>

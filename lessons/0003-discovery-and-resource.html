@@ -1,0 +1,180 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>0003 — Discovery and the resource</title>
+<link rel="stylesheet" href="../assets/course.css">
+<style>
+  pre { font: 0.78rem/1.5 var(--mono); background: #f6f4ea; border: 1px solid var(--rule); border-radius: 6px; padding: 12px 14px; overflow-x: auto; margin: 10px 0 18px; }
+  pre b { color: var(--accent); font-weight: 700; }
+</style>
+</head>
+<body>
+<main>
+<nav class="lesson-nav" data-auto></nav>
+
+<div class="kicker">Lesson 0003 · OAuth for the AMFG connector</div>
+<h1>Discovery and the resource</h1>
+<p class="subtitle">The user pastes one URL. Three hops later, Claude knows where to sign in, how, and what the token is for.</p>
+
+<div class="goal"><b>After 12 minutes you can</b> trace the three discovery hops from <code>https://dev.example.com/mcp</code>, say why the metadata must sit at the host root, and explain what the <code>resource</code> parameter protects against.</div>
+
+<h2>One URL in, everything else discovered</h2>
+<p>When you add a connector in claude.ai, you type <code>https://dev.example.com/mcp</code> and nothing else. No client id, no login URL, no token URL. Claude has to find out:</p>
+<ul>
+  <li>Does this server want OAuth at all, and who is its <dfn data-t="authorization-server">authorization server</dfn>?</li>
+  <li>Where are <code>/authorize</code> and <code>/token</code>?</li>
+  <li>Does it support PKCE S256 and <dfn data-t="cimd">CIMD</dfn> client ids?</li>
+</ul>
+<p>The MCP spec answers this with two standard documents under <dfn data-t="well-known">/.well-known/</dfn>, chained like this (<a href="https://modelcontextprotocol.io/specification/2026-07-28/basic/authorization/authorization-server-discovery">MCP: authorization server discovery</a>):</p>
+
+<figure>
+<svg viewBox="0 0 720 300" role="img" aria-label="Three discovery hops">
+  <defs><marker id="a3" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto"><path d="M0,0 L10,5 L0,10z" fill="#5d5d5a"/></marker></defs>
+  <g font-family="Inter, system-ui, sans-serif" font-size="12">
+    <line x1="90" y1="40" x2="90" y2="290" stroke="#e7c9bb"/><line x1="560" y1="40" x2="560" y2="290" stroke="#b9d8db"/>
+    <rect x="30" y="10" width="120" height="30" rx="6" fill="#fff" stroke="#b4593a"/><text x="90" y="30" text-anchor="middle" fill="#b4593a" font-weight="700">Claude</text>
+    <rect x="470" y="10" width="180" height="30" rx="6" fill="#fff" stroke="#1f6f78"/><text x="560" y="30" text-anchor="middle" fill="#1f6f78" font-weight="700">dev.example.com</text>
+
+    <line x1="92" y1="68" x2="556" y2="68" stroke="#5d5d5a" marker-end="url(#a3)"/><text x="110" y="62" fill="#1b1b1b">① POST /mcp  (no token)</text>
+    <line x1="556" y1="92" x2="94" y2="92" stroke="#1f6f78" stroke-width="2" marker-end="url(#a3)"/><text x="110" y="108" fill="#1f6f78" font-weight="700">401 + WWW-Authenticate: Bearer resource_metadata="…/oauth/protected-resource"</text>
+
+    <line x1="92" y1="148" x2="556" y2="148" stroke="#5d5d5a" marker-end="url(#a3)"/><text x="110" y="142" fill="#1b1b1b">② GET the protected resource metadata</text>
+    <line x1="556" y1="172" x2="94" y2="172" stroke="#1f6f78" stroke-width="2" marker-end="url(#a3)"/><text x="110" y="188" fill="#1f6f78" font-weight="700">{ resource: ".../mcp", authorization_servers: ["https://dev.example.com"] }</text>
+
+    <line x1="92" y1="228" x2="556" y2="228" stroke="#5d5d5a" marker-end="url(#a3)"/><text x="110" y="222" fill="#1b1b1b">③ GET /.well-known/oauth-authorization-server</text>
+    <line x1="556" y1="252" x2="94" y2="252" stroke="#1f6f78" stroke-width="2" marker-end="url(#a3)"/><text x="110" y="268" fill="#1f6f78" font-weight="700">{ authorization_endpoint, token_endpoint, S256, CIMD: true, … }</text>
+  </g>
+</svg>
+<figcaption>All three hops are on the back channel. The browser only opens after hop ③, when Claude knows where <code>/authorize</code> is.</figcaption>
+</figure>
+
+<h2>Hop 1: the 401 points the way</h2>
+<pre>HTTP/1.1 401 Unauthorized
+WWW-Authenticate: Bearer <b>resource_metadata</b>="https://dev.example.com/engine-service/public-api/v1/oauth/protected-resource", scope="mcp:read mcp:write"</pre>
+<p>That's the <dfn data-t="www-authenticate">WWW-Authenticate</dfn> header from <a href="https://www.rfc-editor.org/rfc/rfc9728#section-5.1">RFC 9728 §5.1</a>. If Claude sent a token we didn't accept (expired, revoked, made up), the header also carries <code>error="invalid_token"</code>, so Claude knows to refresh or sign in again.</p>
+<p class="aside">With <dfn data-t="issuer-flag">MCP_OAUTH_ISSUER</dfn> unset, the 401 has no header at all and every <code>/oauth</code> route returns 404. The feature is fully off; only Incoming Secrets work.</p>
+
+<h2>Hop 2: "I am this resource, ask that server"</h2>
+<p>The <dfn data-t="prm">protected resource metadata</dfn> is the API describing itself:</p>
+<pre>{
+  "resource": "https://dev.example.com/mcp",
+  "authorization_servers": ["https://dev.example.com"],
+  "scopes_supported": ["mcp:read", "mcp:write"],
+  "bearer_methods_supported": ["header"],
+  "resource_name": "AMFG"
+}</pre>
+<p>If a client skips the header, RFC 9728 §3.1 tells it to try the well-known path built from the resource URL: <code>/.well-known/oauth-protected-resource<b>/mcp</b></code>. We serve the same document there too.</p>
+
+<h2>Hop 3: the authorization server's menu</h2>
+<p>From the <dfn data-t="issuer">issuer</dfn> <code>https://dev.example.com</code>, <a href="https://www.rfc-editor.org/rfc/rfc8414#section-3">RFC 8414 §3</a> builds <code>https://dev.example.com/.well-known/oauth-authorization-server</code>:</p>
+<pre>{
+  "issuer": "https://dev.example.com",
+  "authorization_endpoint": "https://dev.example.com/engine-service/public-api/v1/oauth/authorize",
+  "token_endpoint": "…/oauth/token",
+  "revocation_endpoint": "…/oauth/revoke",
+  "code_challenge_methods_supported": ["S256"],
+  "token_endpoint_auth_methods_supported": ["none"],
+  "client_id_metadata_document_supported": true,
+  "authorization_response_iss_parameter_supported": true,
+  "scopes_supported": ["mcp:read", "mcp:write", "offline_access"]
+}</pre>
+<p>Two rules make this document live at the <b>host root</b>, not under <code>/engine-service/…</code>:</p>
+<ol>
+  <li>The well-known path is derived from the issuer, and our issuer is the bare host.</li>
+  <li>The <code>issuer</code> inside the document must be <b>identical</b> to the one used to build the URL, or the client must reject it (<a href="https://www.rfc-editor.org/rfc/rfc8414#section-3.3">§3.3</a>). That stops one server from impersonating another's metadata.</li>
+</ol>
+<p>The endpoints <i>listed</i> can be anywhere, so <code>/authorize</code> and <code>/token</code> stay on the existing <code>/engine-service/public-api/v1</code> route. Only three exact root paths are new (lesson 0007 covers how they're routed).</p>
+
+<h2>The resource: whose token is this?</h2>
+<p>A bearer token works for whoever holds it. If an API accepted any token from any authorization server, a token minted for some other MCP server could be replayed at ours, and the reverse. <dfn data-t="resource-indicator">Resource indicators</dfn> (<a href="https://www.rfc-editor.org/rfc/rfc8707">RFC 8707</a>) bind every token to one API:</p>
+<ul>
+  <li>Claude sends <code>resource=https://dev.example.com/mcp</code> to both <code>/authorize</code> and <code>/token</code>, as the MCP spec requires.</li>
+  <li>We compare it in canonical form (origin + path, trailing slash ignored). Anything else gets <code>error=invalid_target</code> (test: <i>"Should refuse a token request for a foreign resource"</i>).</li>
+  <li>The resource is stored on every token row, and <code>/mcp</code> checks it again on every call.</li>
+</ul>
+<p class="aside">Today our authorization server only issues tokens for one resource, so the <code>/mcp</code> check is defence in depth. It becomes essential the day a second API trusts the same server.</p>
+<div class="callout">The MCP spec forbids <b>token passthrough</b>: an MCP server must never accept tokens that weren't issued for it, and never forward its own tokens to other APIs (<a href="https://modelcontextprotocol.io/specification/2026-07-28/basic/authorization/security-considerations">MCP security considerations</a>). The stored and checked <code>resource</code> is how we keep the first half of that rule.</div>
+
+<h2>Practice</h2>
+
+<div class="exercise order" id="order-disc" data-solution="a,b,c,d,e">
+  <div class="prompt">Order what Claude does after the user pastes the URL.</div>
+  <div class="order-pool">
+    <div class="item" data-id="a">Calls <code>/mcp</code> without a token and gets <code>401</code></div>
+    <div class="item" data-id="b">Reads <code>resource_metadata</code> from <code>WWW-Authenticate</code></div>
+    <div class="item" data-id="c">Fetches the protected resource metadata and finds the issuer</div>
+    <div class="item" data-id="d">Fetches <code>/.well-known/oauth-authorization-server</code> from the issuer</div>
+    <div class="item" data-id="e">Opens the browser at <code>authorization_endpoint</code></div>
+  </div>
+  <div class="order-picked"></div>
+  <button class="btn primary check">Check order</button> <button class="btn reset">Reset</button>
+  <div class="feedback" data-right="Right: 401 → resource metadata → authorization server metadata → browser." data-wrong="Not quite. Claude can't open /authorize before it has learned where it is."></div>
+</div>
+
+<div class="exercise sort" id="sort-docs">
+  <div class="prompt">Which document carries it?</div>
+  <div class="sort-row" data-answer="prm"><span><code>authorization_servers</code></span><button class="btn" data-pick="prm">Resource metadata</button><button class="btn" data-pick="as">Auth server metadata</button></div>
+  <div class="sort-row" data-answer="as"><span><code>token_endpoint</code></span><button class="btn" data-pick="prm">Resource metadata</button><button class="btn" data-pick="as">Auth server metadata</button></div>
+  <div class="sort-row" data-answer="prm"><span><code>"resource": "…/mcp"</code></span><button class="btn" data-pick="prm">Resource metadata</button><button class="btn" data-pick="as">Auth server metadata</button></div>
+  <div class="sort-row" data-answer="as"><span><code>code_challenge_methods_supported</code></span><button class="btn" data-pick="prm">Resource metadata</button><button class="btn" data-pick="as">Auth server metadata</button></div>
+  <div class="sort-row" data-answer="as"><span><code>client_id_metadata_document_supported</code></span><button class="btn" data-pick="prm">Resource metadata</button><button class="btn" data-pick="as">Auth server metadata</button></div>
+  <button class="btn primary check">Check</button>
+  <div class="feedback" data-right="Exactly. The API says who it is and who to ask; the authorization server says how to ask." data-wrong="Red rows are wrong. Rule: anything about getting a token belongs to the authorization server."></div>
+</div>
+
+<div class="exercise mcq" data-answer="issuer">
+  <div class="prompt">Why can't the authorization server metadata just live at <code>/engine-service/public-api/v1/oauth/authorization-server</code>?</div>
+  <div class="opts">
+    <button class="opt" data-key="issuer">Clients build its URL from the issuer (the bare host) and require the issuer inside to match</button>
+    <button class="opt" data-key="cors">Browsers block JSON from paths deeper than two levels</button>
+    <button class="opt" data-key="mc">The Management Console has to render it</button>
+    <button class="opt" data-key="tls">Only root paths get HTTPS on our ingress</button>
+  </div>
+  <div class="feedback" data-right="Right. It is served there too, internally, but clients only ever look at the root well-known path." data-wrong="Think about how a client finds the document from just the issuer."></div>
+</div>
+
+<div class="exercise mcq" data-answer="bind">
+  <div class="prompt">What does checking <code>resource</code> on every <code>/mcp</code> call protect against?</div>
+  <div class="opts">
+    <button class="opt" data-key="csrf">A forged redirect back to Claude</button>
+    <button class="opt" data-key="bind">A token issued for a different API being accepted by ours</button>
+    <button class="opt" data-key="pkce">A stolen authorization code being redeemed</button>
+    <button class="opt" data-key="scope">A read-only token calling a write tool</button>
+  </div>
+  <div class="feedback" data-right="Yes. Audience binding: the token names the API it is for, and only that API accepts it." data-wrong="That one belongs to another mechanism (state, PKCE, or scopes). The resource names an API."></div>
+</div>
+
+<div class="exercise mcq" data-answer="off">
+  <div class="prompt">Prod has no <code>MCP_OAUTH_ISSUER</code> yet. What does an unauthenticated <code>POST /mcp</code> get there?</div>
+  <div class="opts">
+    <button class="opt" data-key="chal"><code>401</code> with a <code>WWW-Authenticate</code> pointing at the metadata</button>
+    <button class="opt" data-key="off">A plain <code>401</code> with no OAuth challenge; the <code>/oauth</code> routes return 404</button>
+    <button class="opt" data-key="500"><code>500</code>, because the issuer is missing</button>
+    <button class="opt" data-key="ok"><code>200</code> with an empty tool list</button>
+  </div>
+  <div class="feedback" data-right="Right. The flag switches off the whole feature, discovery included." data-wrong="Look at the side note under Hop 1."></div>
+</div>
+
+<div class="exercise recall">
+  <div class="prompt">Defend it. A reviewer asks: <i>"Why do we need three new root URLs instead of keeping everything under /engine-service?"</i></div>
+  <textarea placeholder="Your answer…"></textarea>
+  <button class="btn reveal">Show model answer</button>
+  <div class="model">Users paste the clean <code>https://…/mcp</code>, and MCP clients discover everything from it. RFC 9728 and RFC 8414 put both metadata documents at fixed well-known paths derived from that URL and from the issuer (the bare host), and the issuer must match exactly. So <code>/mcp</code> and the two well-known documents must answer at the root. The real endpoints (<code>/authorize</code>, <code>/token</code>, <code>/revoke</code>) stay under the existing prefix, because the metadata simply lists them.</div>
+</div>
+
+<div class="score"></div>
+
+<h3>Read next (primary source)</h3>
+<p><a href="https://modelcontextprotocol.io/specification/2026-07-28/basic/authorization/authorization-server-discovery">MCP: authorization server discovery</a> (5 minutes), then <a href="https://www.rfc-editor.org/rfc/rfc8707#section-2">RFC 8707 §2</a> for the resource parameter.</p>
+<p>Quick reference: <a href="../reference/handshake.html">the AMFG handshake</a> · <a href="../reference/glossary.html">glossary</a>.</p>
+
+
+<footer><nav class="lesson-nav" data-auto></nav></footer>
+</main>
+<script src="../assets/quiz.js"></script>
+<script src="../assets/terms.js"></script>
+<script src="../assets/nav.js"></script>
+</body>
+</html>

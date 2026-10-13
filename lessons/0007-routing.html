@@ -1,0 +1,162 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>0007 — Routing it to engine-service</title>
+<link rel="stylesheet" href="../assets/course.css">
+<style>
+  pre { font: 0.78rem/1.5 var(--mono); background: #f6f4ea; border: 1px solid var(--rule); border-radius: 6px; padding: 12px 14px; overflow-x: auto; margin: 10px 0 18px; }
+  table { width: 100%; border-collapse: collapse; font: 0.86rem/1.45 var(--sans); margin: 10px 0 20px; }
+  th, td { text-align: left; vertical-align: top; padding: 7px 8px; border-bottom: 1px solid var(--rule); }
+  th { font-size: 0.72rem; letter-spacing: .08em; text-transform: uppercase; color: var(--soft); }
+  td.ok { color: var(--good); font-weight: 600; } td.no { color: var(--bad); font-weight: 600; }
+</style>
+</head>
+<body>
+<main>
+<nav class="lesson-nav" data-auto></nav>
+
+<div class="kicker">Lesson 0007 · OAuth for the AMFG connector</div>
+<h1>Routing it to engine-service</h1>
+<p class="subtitle">Three exact paths at the host root, a one-line rewrite inside the app, and a template version that decides whether prod can ship.</p>
+
+<div class="goal"><b>After 10 minutes you can</b> trace <code>https://dev.example.com/mcp</code> from the internet to the MCP route, explain why the rewrite lives in engine-service rather than the ingress, and list what's still between us and prod.</div>
+
+<h2>The problem</h2>
+<p>On every AMFG host, the root belongs to the Management Console. engine-service only answers under <code>/engine-service/…</code>. But lesson 0003 showed three URLs that must answer at the root:</p>
+<pre>https://dev.example.com/mcp
+https://dev.example.com/.well-known/oauth-authorization-server
+https://dev.example.com/.well-known/oauth-protected-resource/mcp</pre>
+<p>Everything else (<code>/authorize</code>, <code>/token</code>, <code>/revoke</code>, the consent API) stays on the existing <code>/engine-service/public-api/v1/oauth/*</code> route, because the metadata simply points there.</p>
+
+<h2>The path of one request</h2>
+<figure>
+<svg viewBox="0 0 720 250" role="img" aria-label="Request path from internet to MCP route">
+  <defs><marker id="a7" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto"><path d="M0,0 L10,5 L0,10z" fill="#5d5d5a"/></marker></defs>
+  <g font-family="Inter, system-ui, sans-serif" font-size="12">
+    <rect x="10" y="20" width="140" height="60" rx="8" fill="#fff" stroke="#b4593a"/><text x="80" y="45" text-anchor="middle" fill="#b4593a" font-weight="700">Claude</text><text x="80" y="64" text-anchor="middle" fill="#5d5d5a" font-size="11">POST /mcp</text>
+    <line x1="152" y1="50" x2="196" y2="50" stroke="#5d5d5a" marker-end="url(#a7)"/>
+    <rect x="198" y="10" width="200" height="80" rx="8" fill="#f1efe4" stroke="#bbb"/><text x="298" y="32" text-anchor="middle" font-weight="700">ingress-nginx</text>
+    <text x="298" y="52" text-anchor="middle" fill="#5d5d5a" font-size="11">Exact /mcp → engine-service</text><text x="298" y="68" text-anchor="middle" fill="#5d5d5a" font-size="11">path forwarded unchanged</text>
+    <line x1="400" y1="50" x2="444" y2="50" stroke="#5d5d5a" marker-end="url(#a7)"/>
+    <rect x="446" y="10" width="264" height="230" rx="8" fill="#eef6f7" stroke="#b9d8db"/><text x="578" y="32" text-anchor="middle" fill="#1f6f78" font-weight="700">engine-service pod</text>
+    <rect x="462" y="46" width="232" height="56" rx="6" fill="#fff" stroke="#1f6f78"/><text x="578" y="66" text-anchor="middle" fill="#1f6f78" font-weight="700">rewriteRootPaths</text><text x="578" y="84" text-anchor="middle" fill="#5d5d5a" font-size="11">/mcp → …/public-api/v1/mcp</text>
+    <line x1="578" y1="104" x2="578" y2="130" stroke="#5d5d5a" marker-end="url(#a7)"/>
+    <rect x="462" y="132" width="232" height="44" rx="6" fill="#fff" stroke="#1f6f78"/><text x="578" y="158" text-anchor="middle" fill="#1b1b1b">public API router: auth middleware</text>
+    <line x1="578" y1="178" x2="578" y2="196" stroke="#5d5d5a" marker-end="url(#a7)"/>
+    <rect x="462" y="198" width="232" height="32" rx="6" fill="#fff" stroke="#1f6f78"/><text x="578" y="219" text-anchor="middle" fill="#1b1b1b">McpRoute</text>
+    <text x="198" y="120" fill="#5d5d5a" font-size="11">Everything else at the root (/, /login, /.well-known/other)</text>
+    <text x="198" y="136" fill="#5d5d5a" font-size="11">still goes to the Management Console.</text>
+  </g>
+</svg>
+<figcaption>The ingress only decides <i>which service</i>; engine-service decides <i>which route</i>. After the rewrite, the request is indistinguishable from one sent to the long URL.</figcaption>
+</figure>
+
+<h3>Step 1: the ingress, with Exact rules</h3>
+<p>The infrastructure config adds three <code>extraIngressRules</code> to engine-service's <dfn data-t="ingress">Ingress</dfn>:</p>
+<pre>"extraIngressRules": [
+  { "host": "dev.example.com", "path": "/mcp", "pathType": "Exact" },
+  { "host": "dev.example.com", "path": "/.well-known/oauth-authorization-server", "pathType": "Exact" },
+  { "host": "dev.example.com", "path": "/.well-known/oauth-protected-resource/mcp", "pathType": "Exact" }
+]</pre>
+<p><b>Exact</b> means precisely that path and nothing below it. A <i>Prefix</i> rule on <code>/.well-known</code> would steal every other well-known file from the Management Console, and <code>/mcp</code> as a prefix would also catch <code>/mcp-anything</code>.</p>
+
+<h3>Step 2: why the rewrite is in the app</h3>
+<p>The ingress forwards <code>/mcp</code> exactly as it arrived. It can't rewrite just these three paths: ingress-nginx's <dfn data-t="rewrite-target">rewrite-target</dfn> is an annotation on the <i>whole</i> Ingress, so it would also rewrite every normal <code>/engine-service/…</code> request. deployment-template's own comment warns that extra rules "only work unmodified".</p>
+<p>So engine-service takes over, in <dfn data-t="root-paths">root-paths.js</dfn>. A tiny Express middleware, registered before any router, swaps <code>req.url</code> for the three known paths and keeps the query string:</p>
+<pre>const ROOT_PATHS = {
+  '/mcp':                                     '/public-api/v1/mcp',
+  '/.well-known/oauth-authorization-server':  '/public-api/v1/oauth/authorization-server',
+  '/.well-known/oauth-protected-resource/mcp':'/public-api/v1/oauth/protected-resource'
+};   // each target is also prefixed with API_PREFIX (/engine-service)</pre>
+<p class="aside">Tests call both URLs and expect identical results: <i>"Should serve the MCP endpoint at the root path"</i> and <i>"…at the root well-known path"</i>.</p>
+
+<h2>The version gotcha</h2>
+<p><code>extraIngressRules</code> first appears in <dfn data-t="deployment-template">deployment template</dfn> <b>4.0.8</b>. Older versions don't fail on the key. They <b>silently ignore it</b>: no error, no route, and <code>/mcp</code> lands on the Management Console.</p>
+<table>
+  <tr><th>Environment</th><th>deployment template</th><th>Root paths routed?</th></tr>
+  <tr><td>Local (amfg-compose)</td><td>n/a: nginx <code>location =</code> blocks</td><td class="ok">Yes</td></tr>
+  <tr><td>the dev environment</td><td><code>^4.0.9</code></td><td class="ok">Yes, verified end to end</td></tr>
+  <tr><td>prod</td><td><code>^3.0.1</code></td><td class="no">No: template bump pending</td></tr>
+</table>
+<div class="callout">If <code>/.well-known/oauth-authorization-server</code> on a host returns the Management Console's HTML instead of JSON, check the deployment template version first.</div>
+
+<h2>What's still between us and prod</h2>
+<ol>
+  <li><b>Template bump</b>: bump prod to deployment template 4.0.8+ so the already-merged Exact rules take effect.</li>
+  <li><b>Release port</b>: all the MRs (engine-service, Management Console consent page, infrastructure, compose) go into the next release.</li>
+  <li><b><dfn data-t="issuer-flag">MCP_OAUTH_ISSUER</dfn></b> set on prod to <code>https://console.amfg.ai</code>. Until then the feature is fully off (lesson 0003), so shipping the code early is safe.</li>
+  <li><b>Directory listing</b>: the business checklist for listing the connector in Claude's directory.</li>
+</ol>
+
+<h2>Practice</h2>
+
+<div class="exercise order" id="order-route" data-solution="a,b,c,d,e">
+  <div class="prompt">Order the hops of <code>POST https://dev.example.com/mcp</code>.</div>
+  <div class="order-pool">
+    <div class="item" data-id="a">ingress-nginx matches the Exact <code>/mcp</code> rule</div>
+    <div class="item" data-id="b">The request reaches the engine-service pod with path <code>/mcp</code></div>
+    <div class="item" data-id="c"><code>rewriteRootPaths</code> sets <code>req.url</code> to <code>/engine-service/public-api/v1/mcp</code></div>
+    <div class="item" data-id="d">The public API auth middleware checks the bearer token</div>
+    <div class="item" data-id="e"><code>McpRoute</code> handles the JSON-RPC call</div>
+  </div>
+  <div class="order-picked"></div>
+  <button class="btn primary check">Check order</button> <button class="btn reset">Reset</button>
+  <div class="feedback" data-right="Right. Ingress picks the service; the app rewrites; then the usual pipeline." data-wrong="Not quite. The ingress doesn't change the path; the rewrite happens inside the pod, before routing."></div>
+</div>
+
+<div class="exercise mcq" data-answer="wide">
+  <div class="prompt">Why not let the ingress rewrite <code>/mcp</code> to <code>/engine-service/public-api/v1/mcp</code>?</div>
+  <div class="opts">
+    <button class="opt" data-key="tls">The ingress can't see paths inside HTTPS</button>
+    <button class="opt" data-key="wide">rewrite-target applies to the whole Ingress, so it would change every engine-service route too</button>
+    <button class="opt" data-key="slow">Rewrites in nginx add too much latency</button>
+    <button class="opt" data-key="mcp">The MCP spec forbids proxies from changing paths</button>
+  </div>
+  <div class="feedback" data-right="Yes. One annotation per Ingress object, so a per-path rewrite isn't possible inside the template." data-wrong="Think about where the annotation is set: per rule, or per Ingress?"></div>
+</div>
+
+<div class="exercise mcq" data-answer="exact">
+  <div class="prompt">Why <code>pathType: Exact</code> instead of <code>Prefix</code>?</div>
+  <div class="opts">
+    <button class="opt" data-key="exact">So only these three URLs leave the Management Console; other <code>/.well-known</code> files and look-alike paths stay put</button>
+    <button class="opt" data-key="speed">Exact rules are faster to evaluate</button>
+    <button class="opt" data-key="req">Kubernetes requires Exact for root paths</button>
+    <button class="opt" data-key="cors">Prefix rules break CORS</button>
+  </div>
+  <div class="feedback" data-right="Right. Take the minimum from the console's namespace." data-wrong="What else lives under /.well-known on the same host?"></div>
+</div>
+
+<div class="exercise mcq" data-answer="silent">
+  <div class="prompt">Someone merges the prod Exact rules but forgets the deployment template bump. What happens?</div>
+  <div class="opts">
+    <button class="opt" data-key="fail">The deploy pipeline fails on the unknown key</button>
+    <button class="opt" data-key="silent">The deploy succeeds; the rules are silently dropped, and <code>/mcp</code> hits the Management Console</button>
+    <button class="opt" data-key="ok">Everything works; 3.x supports the rules</button>
+    <button class="opt" data-key="down">engine-service stops answering under <code>/engine-service</code></button>
+  </div>
+  <div class="feedback" data-right="Right, and that's exactly prod today. It's why the template bump blocks the release." data-wrong="3.0.1's template has no code that reads extraIngressRules."></div>
+</div>
+
+<div class="exercise recall">
+  <div class="prompt">Defend it. A reviewer asks: <i>"Rewriting req.url inside the app feels hacky. Why not route it properly?"</i></div>
+  <textarea placeholder="Your answer…"></textarea>
+  <button class="btn reveal">Show model answer</button>
+  <div class="model">The proper ingress rewrite isn't available: deployment template sets rewrite-target per Ingress, so it would rewrite every engine-service path, and a hand-written Ingress outside the template would drift. The ingress therefore only picks the service with three Exact rules, and a 20-line middleware maps those three exact paths to routes that already exist. It runs before routing, has no other effect, and is covered by tests that call both URLs.</div>
+</div>
+
+<div class="score"></div>
+
+<h3>Read next (primary source)</h3>
+<p><a href="https://kubernetes.io/docs/concepts/services-networking/ingress/#path-types">Kubernetes: Ingress path types</a>, then <a href="https://kubernetes.github.io/ingress-nginx/examples/rewrite/">ingress-nginx: rewrite</a> to see why the annotation is Ingress-wide.</p>
+<p>Quick reference: <a href="../reference/handshake.html">the AMFG handshake</a> · <a href="../reference/glossary.html">glossary</a>.</p>
+
+
+<footer><nav class="lesson-nav" data-auto></nav></footer>
+</main>
+<script src="../assets/quiz.js"></script>
+<script src="../assets/terms.js"></script>
+<script src="../assets/nav.js"></script>
+</body>
+</html>
